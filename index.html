@@ -1680,7 +1680,7 @@ function viewSeo(v){
   if(!S.seoSite) S.seoSite=S.site==="TR"?"TR":"TN";
   const site=S.seoSite, doc=(S.seo||[]).find(x=>x.id===site)||null, host=(SEO_SITES.find(x=>x[0]===site)||[])[1];
   const pick=`<div class="filters">${SEO_SITES.map(([k,d])=>`<button data-seosite="${k}" aria-pressed="${site===k}">${h(d)}</button>`).join("")}</div>`;
-  if(!doc||!doc.gsc){ v.innerHTML=`<div class="head"><h2>Website & SEO</h2></div>${pick}<section class="panel"><div class="empty">No data for ${h(host)} yet. Claude fills this page from Google Search Console and Google Analytics every two weeks.</div></section>`; return; }
+  if(!doc||!doc.gsc){ v.innerHTML=`<div class="head"><h2>Website & SEO</h2><button class="btn" id="seoRefresh">Refresh now</button></div>${pick}<section class="panel"><div class="empty">No data for ${h(host)} yet. Claude fills this page from Google Search Console and Google Analytics every two weeks.</div></section>`; return; }
   const g=doc.gsc||{}, daily=(g.daily||[]).slice().sort((a,b)=>a[0].localeCompare(b[0])), ga=doc.ga||{}, gad=(ga.daily||[]).slice().sort((a,b)=>a[0].localeCompare(b[0]));
   const end=daily.length?daily[daily.length-1][0]:today(), d28=addDays(end,-27), p0=addDays(end,-55), p1=addDays(end,-28);
   const clicks=seoSum(daily,d28,end,1), clicksP=seoSum(daily,p0,p1,1), impr=seoSum(daily,d28,end,2), imprP=seoSum(daily,p0,p1,2), pos=seoAvgPos(daily,d28,end), posP=seoAvgPos(daily,p0,p1);
@@ -1689,8 +1689,9 @@ function viewSeo(v){
   const tile=(n,l,dl)=>`<div class="kpi" style="cursor:default"><div class="n">${n}</div><div class="l">${l}</div>${dl||""}</div>`;
   const next=doc.updatedAt?fmtDate(addDays(String(doc.updatedAt).slice(0,10),14)):"";
   const qrows=(g.queries||[]).slice(0,25), prevQ={}; ((doc.prev||{}).queries||[]).forEach(q=>prevQ[q[0]]=Number(q[4]));
-  v.innerHTML=`<div class="head"><h2>Website & SEO</h2><span class="sub">${h(host)} · updated ${doc.updatedAt?ago(doc.updatedAt)+" ago":"—"}${next?" · next update around "+next:""}</span></div>
+  v.innerHTML=`<div class="head"><h2>Website & SEO</h2><span class="sub">${h(host)} · updated ${doc.updatedAt?ago(doc.updatedAt)+" ago":"—"}${doc.source==="api"?" · live from Google, refreshed daily":next?" · next update around "+next:""}</span><button class="btn" id="seoRefresh">Refresh now</button></div>
   ${pick}
+  ${doc.syncError?`<div class="banner warnb"><b>Google connection</b><span>${h(doc.syncError)}</span></div>`:""}
   ${doc.summary?`<div class="banner" style="align-items:flex-start"><b>Claude's summary</b><span style="white-space:pre-line">${h(doc.summary)}</span></div>`:""}
   <div class="kpis">
    ${tile(fmtN(clicks),"Clicks from Google · last 28 days",delta(clicks,clicksP))}
@@ -1714,6 +1715,9 @@ function viewSeo(v){
     :""}`;
 }
 document.addEventListener("click",e=>{ const b=e.target.closest("[data-seosite]"); if(b){ S.seoSite=b.dataset.seosite; render(); } });
+document.addEventListener("click",async e=>{ const b=e.target.closest("#seoRefresh"); if(!b) return; b.disabled=true; b.textContent="Refreshing…";
+  try{ const {data,error}=await window.dwSupabase.functions.invoke("seo-sync",{body:{}}); let m=data&&data.error; if(error){ try{ m=(await error.context.json()).error; }catch{ m=error.message; } }
+    toast(m?m:"Updated from Google"); }catch(er){ toast(String(er.message||er)); } b.disabled=false; b.textContent="Refresh now"; });
 
 /* ---------- boot ---------- */
 (function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","centres","insurers","invoices","money","campaigns","seo","replies","settings"].includes(hsh)) S.tab=hsh; })();
