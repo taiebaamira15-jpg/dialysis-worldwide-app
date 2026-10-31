@@ -761,7 +761,7 @@ document.addEventListener("click",e=>{ const c=e.target.closest("[data-comm]"); 
 function openComm(id){
   const m=moneySet(); const c=id?S.commissions.find(x=>x.id===id):{date:nowISO(),name:"",center:"",totalPaidEuro:"",currency:"EUR",sessions:"",exchangeRate:m.rate,centerFee:m.centerFee,commissionRate:m.commission,status:"paid",site:S.site==="ALL"?"TN":S.site};
   if(!c) return;
-  const centersKnown=[...new Set([...S.commissions.map(x=>x.center),...S.patients.map(p=>p.city)].filter(Boolean))];
+  const centersKnown=[...new Set([...centresFor(c.site).map(x=>x.name),...S.commissions.filter(x=>!c.site||x.site===c.site).map(x=>x.center)].filter(Boolean))];
   drawer(`<header><h3>${id?h(c.name):"New commission entry"}</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
    <div class="form">
     <label class="f full">Patient<input id="c_name" list="c_pts" value="${h(c.name)}"><datalist id="c_pts">${S.patients.slice(0,400).map(p=>`<option value="${h(p.name)}">`).join("")}</datalist></label>
@@ -849,6 +849,8 @@ const DAYN=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const DAYFR=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
 const FR_COUNTRIES=/france|belg|suisse|switz|alg|maroc|moroc|tunis|luxem|canada|québec/i;
 function centres(){ return Array.isArray(S.settings.centers)?S.settings.centers:[]; }
+function centresFor(site){ const all=centres(); return site&&site!=="ALL"?all.filter(c=>(c.site||"TN")===site):all; }
+const centreOpt=c=>`<option value="${h(c.name)}">${h(c.city||"")}</option>`;
 function centreBy(name){ return centres().find(c=>c.name===name)||{name:name||""}; }
 function dayPattern(p){ if(Array.isArray(p.days)&&p.days.length) return p.days.map(Number);
   return ({1:[1],2:[2,5],3:[1,3,5],4:[1,2,4,6],5:[1,2,3,4,5],6:[1,2,3,4,5,6]})[Number(p.perWeek)||3]||[1,3,5]; }
@@ -890,7 +892,7 @@ function openPatient(id){
   const s=siteSet(p.site), pat=dayPattern(p);
   const lang=langOf(p), hello=lang==="fr"?`Bonjour ${p.name}, c'est l'équipe ${siteName(p.site)}.`:lang==="de"?`Hallo ${p.name}, hier ist das Team von ${siteName(p.site)}.`:`Hello ${p.name}, this is the ${siteName(p.site)} team.`;
   const wa=waLink(p,hello);
-  const cOpts=[...new Set([...centres().map(c=>c.name),p.center].filter(Boolean))];
+  const cOpts=[...new Set([...centresFor(p.site).map(c=>c.name),p.center].filter(Boolean))];
   drawer(`<header><h3>${h(p.name)} ${comms.length>1?`<span class="chip acc">↺ ${comms.length} stays</span>`:""}</h3><button class="x" data-close aria-label="Close">×</button></header>
   <div class="body">
    <div class="actions">${wa?`<a class="btn" href="${h(wa)}" target="_blank" rel="noopener">WhatsApp</a>`:""}<button class="btn" id="pPlan">Plan sessions</button><button class="btn" id="pConf">Confirmation PDF</button><button class="btn" id="pMail">Email</button><button class="btn" id="pInv">Create invoice</button></div>
@@ -964,7 +966,7 @@ function openSession(id){
   drawer(`<header><h3>${h(s.name)}</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body"><div class="form">
    <label class="f">Date<input type="date" id="s_date" value="${h(s.date)}"></label>
    <label class="f">Time<input type="time" id="s_time" value="${h(s.time||"")}"></label>
-   <label class="f">Centre<input id="s_center" list="s_cts" value="${h(s.center||"")}"><datalist id="s_cts">${centres().map(c=>`<option value="${h(c.name)}">`).join("")}</datalist></label>
+   <label class="f">Centre<input id="s_center" list="s_cts" value="${h(s.center||"")}"><datalist id="s_cts">${centresFor(s.site||(S.patients.find(x=>x.id===s.patientId)||{}).site).map(centreOpt).join("")}</datalist></label>
    <label class="f">Status<select id="s_status">${["planned","confirmed","done","cancelled"].map(x=>`<option ${s.status===x?'selected':''}>${x}</option>`).join("")}</select></label></div>
    <div class="actions"><button class="btn primary" id="sSave">Save</button><button class="btn" data-patient="${s.patientId}">Open patient</button><button class="btn danger" id="sDel">Delete</button></div></div>`);
   $("sSave").onclick=async()=>{ await db.doc("sessions/"+id).update({date:$("s_date").value,time:$("s_time").value,center:$("s_center").value,status:$("s_status").value}); toast("Session saved"); closeDrawer(); };
@@ -974,7 +976,7 @@ document.addEventListener("click",e=>{ const s=e.target.closest("[data-session]"
 function viewPlanner(v){
   S.week=S.week||mondayOf(today()); const days=[...Array(7)].map((_,i)=>addDays(S.week,i));
   const cf=S.centerF||"all", list=S.sessions.filter(s=>siteOk(s)&&s.status!=="cancelled"&&s.date>=days[0]&&s.date<=days[6]&&(cf==="all"||(s.center||"")===cf));
-  const cNames=[...new Set([...centres().map(c=>c.name),...S.sessions.map(s=>s.center).filter(Boolean)])];
+  const cNames=[...new Set([...centresFor(S.site).map(c=>c.name),...S.sessions.filter(siteOk).map(s=>s.center).filter(Boolean)])];
   const t=today(), soon=addDays(t,21);
   const noSlots=S.patients.filter(p=>siteOk(p)&&["confirmed","quote","docs","treatment"].includes(p.stage)&&p.arrival&&p.arrival>=t&&p.arrival<=soon&&!patientSessions(p.id).length);
   v.innerHTML=`<div class="head"><h2>Session planner</h2><span class="sub">Week of ${fmtDate(days[0])} · ${list.length} sessions</span>
@@ -1063,8 +1065,9 @@ document.addEventListener("click",async e=>{
 
 /* ---------- Centres in settings ---------- */
 function openCentres(){
-  const list=centres().map(c=>({...c}));
-  const draw=()=>`${list.map((c,i)=>`<section class="panel"><div style="padding:12px 16px" class="form">
+  const list=centres().map(c=>({...c})); let cs=S.site==="ALL"?"TN":S.site;
+  const order=()=>list.map((c,i)=>i).filter(i=>(list[i].site||"TN")===cs).sort((a,b)=>(list[a].city||"").localeCompare(list[b].city||"")||list[a].name.localeCompare(list[b].name));
+  const draw=()=>`<div class="filters">${Object.values(SITES).map(x=>`<button data-csite="${x.key}" aria-pressed="${cs===x.key}">${h(x.country)} · ${list.filter(c=>(c.site||"TN")===x.key).length}</button>`).join("")}</div>${order().map(i=>[list[i],i]).map(([c,i])=>`<section class="panel"><div style="padding:12px 16px" class="form">
     <label class="f">Name<input data-ci="${i}" data-cf2="name" value="${h(c.name)}"></label>
     <label class="f">Site<select data-ci="${i}" data-cf2="site">${Object.values(SITES).map(x=>`<option value="${x.key}" ${c.site===x.key?'selected':''}>${h(x.country)}</option>`).join("")}</select></label>
     <label class="f">City<input data-ci="${i}" data-cf2="city" value="${h(c.city||"")}"></label>
@@ -1076,8 +1079,9 @@ function openCentres(){
    <div class="actions"><button class="btn" id="cAdd">Add centre</button><button class="btn primary" id="cSaveAll">Save centres</button></div></div>`);
   const host=$("cList");
   host.addEventListener("input",e=>{ const t=e.target; if(t.dataset.ci!==undefined) list[t.dataset.ci][t.dataset.cf2]=t.value; });
-  host.addEventListener("click",e=>{ const r=e.target.closest("[data-crm]"); if(r){ list.splice(+r.dataset.crm,1); host.innerHTML=draw(); } });
-  $("cAdd").onclick=()=>{ list.push({name:"New centre",site:"TN",defaultTime:"07:00"}); host.innerHTML=draw(); };
+  host.addEventListener("click",e=>{ const r=e.target.closest("[data-crm]"); if(r){ list.splice(+r.dataset.crm,1); host.innerHTML=draw(); } const f=e.target.closest("[data-csite]"); if(f){ cs=f.dataset.csite; host.innerHTML=draw(); } });
+  host.addEventListener("change",e=>{ const t=e.target; if(t.dataset.cf2==="site") host.innerHTML=draw(); });
+  $("cAdd").onclick=()=>{ list.push({name:"New centre",site:cs,city:"",defaultTime:"07:00"}); host.innerHTML=draw(); };
   $("cSaveAll").onclick=async()=>{ await db.doc("settings/main").update({centers:list.filter(c=>c.name)}); toast("Centres saved"); closeDrawer(); };
 }
 
@@ -1102,7 +1106,7 @@ function openReply(id){
 /* ---------- Settings ---------- */
 function viewSettings(v){
   const st=S.settings, c=st.company||{};
-  v.innerHTML=`<div class="head"><h2>Settings</h2><button class="btn" id="sCentres">Dialysis centres (${centres().length})</button></div>
+  v.innerHTML=`<div class="head"><h2>Settings</h2><button class="btn" id="sCentres">Dialysis centres (${centresFor(S.site).length})</button></div>
   <div style="display:flex;flex-direction:column;gap:18px">
   <section class="panel"><h3>Logo on invoices</h3><div style="padding:16px" class="logo-prev">
     ${st.logoUrl?`<img src="${h(st.logoUrl)}" alt="Dialysis Worldwide logo">`:`<span class="sub">No logo uploaded yet. Invoices show a simple “Dialysis Worldwide” mark until you add yours.</span>`}
