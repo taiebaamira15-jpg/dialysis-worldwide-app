@@ -257,6 +257,8 @@ table.list tr{cursor:pointer} table.list tbody tr:hover{background:var(--sunk)}
 .tpl:first-of-type{border-top:0}
 .tpl p{margin:6px 0 0;color:var(--muted);font-size:14px;white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-weight:700;z-index:60;font-size:14px;max-width:calc(100% - 32px)}
+.latest{margin-bottom:22px}
+#pushCard #pushBtns{margin-left:auto;display:flex;gap:8px}
 .banner{background:var(--accent-soft);border-radius:var(--r);padding:12px 16px;margin-bottom:18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:14px}
 .banner b{color:var(--accent)}
 .logo-prev{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -303,7 +305,7 @@ const STAGES = [
   ["confirmed","Confirmed"],["treatment","In treatment"],["done","Completed"]
 ];
 const DOCS = [["passport","Passport copy"],["serology","Serology (HBV, HCV, HIV)"],["labs","Recent blood tests"],["prescription","Dialysis prescription"],["report","Medical report from nephrologist"],["consent","Signed consent / booking form"]];
-const S = {site:"ALL", tab:"today", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
+const S = {site:"ALL", tab:"dashboard", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
 let db=null, sample=null, downloads=null, assets=null;
 
 const h = s => String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -328,7 +330,7 @@ function renderChrome(){
   $("sites").innerHTML = [["ALL","All sites"],...Object.values(SITES).map(s=>[s.key, s.country])].map(([k,l])=>
     `<button aria-pressed="${S.site===k}" data-site="${k}">${h(l)}${SITES[k]?.soon?'<span class="soon">soon</span>':''}</button>`).join("");
   const open = S.emails.filter(e=>!e.answered && e.kind!=="other" && siteOk(e)).length;
-  const tabs=[["today","Today"],["inbox","Inbox",open],["patients","Patients"],["planner","Planner"],["insurers","Insurers"],["invoices","Invoices"],["money","Commissions"],["replies","Reply library"],["settings","Settings"]];
+  const tabs=[["dashboard","Dashboard"],["inbox","Inbox",open],["patients","Patients"],["planner","Planner"],["insurers","Insurers"],["invoices","Invoices"],["money","Commissions"],["replies","Reply library"],["settings","Settings"]];
   $("tabs").innerHTML = tabs.map(([k,l,c])=>`<button data-tab="${k}" ${S.tab===k?'aria-current="page"':''}>${l}${c?`<span class="count">${c}</span>`:''}</button>`).join("");
 }
 document.addEventListener("click",e=>{
@@ -341,7 +343,7 @@ function render(){
   renderChrome();
   const v=$("view");
   if(!S.ready){ v.innerHTML=`<div class="empty">Loading your records…</div>`; return; }
-  ({today:viewToday,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewToday)(v);
+  ({dashboard:viewDashboard,today:viewDashboard,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v);
 }
 
 /* ---------- Today ---------- */
@@ -1102,8 +1104,55 @@ function closeDrawer(){ $("drawerHost").innerHTML=""; S.drawer=null; }
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S.drawer) closeDrawer(); });
 async function copy(t){ try{ await navigator.clipboard.writeText(t); toast("Reply copied"); }catch{ const ta=$("eReply"); if(ta){ta.focus();ta.select();} toast("Press Ctrl+C to copy"); } }
 
+/* ---------- Dashboard (first page): latest submissions + phone notifications ---------- */
+function viewDashboard(v){
+  viewToday(v);
+  const h2=v.querySelector(".head h2"); if(h2) h2.textContent="Dashboard";
+  const em=S.emails.filter(e=>siteOk(e)&&e.kind!=="other").sort((a,b)=>new Date(b.receivedAt||0)-new Date(a.receivedAt||0));
+  const latest=`<section class="panel latest"><h3>Latest submissions <span>newest first</span></h3>
+    <ul class="rows">${em.slice(0,10).map(latestRow).join("")||`<li class="empty">No submissions yet.</li>`}</ul>
+    ${em.length>10?`<div style="padding:10px 16px"><button class="btn small" data-go="inbox">See all ${em.length} in Inbox</button></div>`:""}</section>`;
+  const k=v.querySelector(".kpis"); if(k) k.insertAdjacentHTML("afterend",`<div class="banner" id="pushCard"><b>Phone notifications</b><span id="pushMsg">Checking…</span><span id="pushBtns"></span></div>`+latest);
+  updatePushCard();
+}
+function latestRow(e){
+  const late=!e.answered&&hoursSince(e.receivedAt)>24, kind=e.kind==="application"?"Application":e.kind==="question"?"Question":"Email";
+  const when=e.receivedAt?new Date(e.receivedAt).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+  return `<li><button class="row" data-email="${e.id}"><span class="dot ${e.answered?'ok':late?'red':'warn'}"></span>
+  <span style="min-width:0"><div class="t">${h(e.fromName||e.from)} <span class="chip">${kind}</span></div><div class="s">${h(e.subject)}</div></span>
+  <span class="r"><span class="site-tag">${h(e.site||"?")}</span><br>${h(when)} · ${e.answered?'answered':'not answered'}</span></button></li>`;
+}
+const PUSH_FN="push";
+function b64u(s){ const b=atob((s+"=".repeat((4-s.length%4)%4)).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(b,c=>c.charCodeAt(0)); }
+async function pushState(){
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)) return "unsupported";
+  if(Notification.permission==="denied") return "denied";
+  const reg=await navigator.serviceWorker.ready; return (await reg.pushManager.getSubscription())?"on":"off";
+}
+async function updatePushCard(){
+  const m=$("pushMsg"), b=$("pushBtns"); if(!m) return;
+  const st=await pushState().catch(()=>"unsupported"), ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  if(!$("pushMsg")) return;
+  if(st==="unsupported"){ m.textContent=ios?"On iPhone: open this page in Safari, tap Share → “Add to Home Screen”, then open Dialysis WW from the home-screen icon and tap “Turn on” here.":"This browser can't show notifications."; b.innerHTML=""; return; }
+  if(st==="denied"){ m.textContent="Notifications are blocked. Allow them in your phone settings → Notifications → Dialysis WW."; b.innerHTML=""; return; }
+  if(st==="on"){ m.textContent="On for this device: you get a notification for every new application or question."; b.innerHTML=`<button class="btn small" id="pushTest">Send a test</button> <button class="btn small" id="pushOff">Turn off</button>`; $("pushTest").onclick=pushTest; $("pushOff").onclick=pushOff; return; }
+  m.textContent="Get a notification on this device for every new application or question."; b.innerHTML=`<button class="btn small primary" id="pushOn">Turn on</button>`; $("pushOn").onclick=pushOn;
+}
+async function pushCall(body){ const {data,error}=await window.dwSupabase.functions.invoke(PUSH_FN,{body}); if(error) throw new Error(error.message||String(error)); if(data&&data.error) throw new Error(data.error); return data; }
+async function pushOn(){
+  try{
+    const p=await Notification.requestPermission(); if(p!=="granted"){ updatePushCard(); return; }
+    const reg=await navigator.serviceWorker.ready, {publicKey}=await pushCall({action:"publicKey"});
+    let s=await reg.pushManager.getSubscription(); if(!s) s=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(publicKey)});
+    await pushCall({action:"subscribe",sub:s.toJSON(),device:navigator.userAgent}); toast("Notifications turned on");
+  }catch(e){ toast("Couldn't turn on: "+(e.message||e)); }
+  updatePushCard();
+}
+async function pushTest(){ try{ const r=await pushCall({action:"test"}); toast(r.sent?`Test sent to ${r.sent} device${r.sent>1?"s":""}`:"No device received it"); }catch(e){ toast("Test failed: "+(e.message||e)); } }
+async function pushOff(){ try{ const reg=await navigator.serviceWorker.ready, s=await reg.pushManager.getSubscription(); if(s){ await pushCall({action:"unsubscribe",endpoint:s.endpoint}).catch(()=>{}); await s.unsubscribe(); } toast("Notifications off on this device"); }catch(e){ toast(String(e.message||e)); } updatePushCard(); }
+
 /* ---------- boot ---------- */
-(function(){ const hsh=(location.hash||"").slice(1); if(["today","inbox","patients","planner","insurers","invoices","money","replies","settings"].includes(hsh)) S.tab=hsh; })();
+(function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","insurers","invoices","money","replies","settings"].includes(hsh)) S.tab=hsh; })();
 initTheme();
 render();
 const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not connected"; $("view").innerHTML=`<div class="empty">Your records are still loading. Check your internet connection.</div>`; } },10000);
@@ -1117,7 +1166,7 @@ const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not con
   db.doc("settings/main").onSnapshot(s=>{ S.settings=s.exists?(s.data()||{}):{}; done("settings"); },()=>{});
   claude.use("sample").then(x=>sample=x); claude.use("downloads").then(x=>downloads=x); claude.use("assets").then(x=>assets=x);
 })();
-function renderBehind(){ const v=$("view"); if(!S.ready) return; ({today:viewToday,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewToday)(v); }
+function renderBehind(){ const v=$("view"); if(!S.ready) return; ({dashboard:viewDashboard,today:viewDashboard,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v); }
 </script>
 </body>
 </html>
