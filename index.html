@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Dialysis Worldwide</title>
-<meta name="theme-color" content="#D0101C">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#132126" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Dialysis WW">
@@ -288,6 +289,51 @@ table.list tr{cursor:pointer} table.list tbody tr:hover{background:var(--sunk)}
 .slot.confirmed{border-left:3px solid var(--ok)} .slot.done{opacity:.6} .slot.planned{border-left:3px solid var(--warn)}
 #themeBtn{font-size:12px}
 @media (prefers-reduced-motion:no-preference){.drawer{animation:slide .18s ease-out}@keyframes slide{from{transform:translateX(30px);opacity:.6}}}
+
+/* ===== v2 layout: sidebar on PC, bottom bar on phone ===== */
+.ico{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+nav.tabs .grp{display:none} nav.tabs button .ico{display:none}
+#bottomNav{display:none}
+.grow{flex:1 1 220px;width:auto}
+.mb{margin-bottom:14px}
+.scrollx{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}.scrollx button{flex:none}
+.lbl{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chk.pill{border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:var(--surface);cursor:pointer;font-size:13px}
+.banner.warnb{background:var(--warn-soft)}
+.morelist{display:flex;flex-direction:column;gap:4px}
+.moreitem{display:flex;align-items:center;gap:12px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:13px 14px;font-weight:700;font-size:15px;cursor:pointer;text-align:left}
+.moreitem .ico{display:block}
+@media (min-width:980px){
+  nav.tabs{position:fixed;left:0;top:calc(var(--hdr,62px) + env(safe-area-inset-top,0px));bottom:0;width:224px;flex-direction:column;gap:2px;padding:12px 10px 20px;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto;max-width:none;margin:0}
+  nav.tabs .grp{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:16px 12px 6px}
+  nav.tabs .grp:first-child{padding-top:4px}
+  nav.tabs button{border:0;border-radius:8px;padding:9px 12px;justify-content:flex-start;gap:11px;font-weight:600;color:var(--muted);width:100%}
+  nav.tabs button .ico{display:block}
+  nav.tabs button:hover{background:var(--sunk);color:var(--ink)}
+  nav.tabs button[aria-current="page"]{background:var(--accent-soft);color:var(--ink);border:0;font-weight:700}
+  nav.tabs button .count{margin-left:auto}
+  header.top .bar{max-width:none;padding-left:24px;padding-right:24px}
+  main.wrap{margin-left:224px;max-width:1260px;padding:26px 36px 48px}
+}
+@media (max-width:979px){
+  nav.tabs{display:none}
+  #bottomNav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
+  #bottomNav button{flex:1;border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--muted);padding:4px 0;position:relative;cursor:pointer;min-height:48px;justify-content:center}
+  #bottomNav button .ico{width:23px;height:23px}
+  #bottomNav button[aria-current="page"]{color:var(--ink)}
+  #bottomNav button[aria-current="page"] .ico{stroke-width:2.3}
+  #bottomNav .count{position:absolute;top:0;left:calc(50% + 5px);font-size:10px;padding:0 5px}
+  main.wrap{padding-top:16px;padding-bottom:calc(90px + env(safe-area-inset-bottom,0px))}
+  .toast{bottom:calc(86px + env(safe-area-inset-bottom,0px))}
+  header.top .bar{gap:8px;padding-block:8px}
+  .sites{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto}
+  .sites button{flex:1}
+  .head h2{font-size:22px}
+  .search{width:100%}
+  .head .grow{flex-basis:100%;order:5}
+}
+
 </style>
 
 </head>
@@ -318,7 +364,7 @@ const STAGES = [
   ["confirmed","Confirmed"],["treatment","In treatment"],["done","Completed"]
 ];
 const DOCS = [["passport","Passport copy"],["serology","Serology (HBV, HCV, HIV)"],["labs","Recent blood tests"],["prescription","Dialysis prescription"],["report","Medical report from nephrologist"],["consent","Signed consent / booking form"]];
-const S = {site:"ALL", tab:"dashboard", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
+const S = {site:"ALL", tab:"dashboard", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], campaigns:[], settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
 let db=null, sample=null, downloads=null, assets=null;
 
 const h = s => String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -343,8 +389,7 @@ function renderChrome(){
   $("sites").innerHTML = [["ALL","All sites"],...Object.values(SITES).map(s=>[s.key, s.country])].map(([k,l])=>
     `<button aria-pressed="${S.site===k}" data-site="${k}">${h(l)}${SITES[k]?.soon?'<span class="soon">soon</span>':''}</button>`).join("");
   const open = S.emails.filter(e=>!e.answered && e.kind!=="other" && siteOk(e)).length;
-  const tabs=[["dashboard","Dashboard"],["inbox","Inbox",open],["patients","Patients"],["planner","Planner"],["insurers","Insurers"],["invoices","Invoices"],["money","Commissions"],["replies","Reply library"],["settings","Settings"]];
-  $("tabs").innerHTML = tabs.map(([k,l,c])=>`<button data-tab="${k}" ${S.tab===k?'aria-current="page"':''}>${l}${c?`<span class="count">${c}</span>`:''}</button>`).join("");
+  renderNav();
 }
 document.addEventListener("click",e=>{
   const s=e.target.closest("[data-site]"); if(s){ S.site=s.dataset.site; render(); return; }
@@ -356,7 +401,7 @@ function render(){
   renderChrome();
   const v=$("view");
   if(!S.ready){ v.innerHTML=`<div class="empty">Loading your records…</div>`; return; }
-  ({dashboard:viewDashboard,today:viewDashboard,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v);
+  ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v);
 }
 
 /* ---------- Today ---------- */
@@ -393,8 +438,11 @@ function viewTodayBase(v){
 document.addEventListener("click",e=>{ const g=e.target.closest("[data-go]"); if(g) go(g.dataset.go); });
 function automationBanner(){
   const a=S.settings.automation||{};
-  if(a.lastRun) return `<div class="banner"><b>Email automation on</b><span>Last inbox check ${ago(a.lastRun)} ago${a.lastSummary?` · ${h(a.lastSummary)}`:''}</span></div>`;
-  return `<div class="banner"><b>Email automation is not running yet.</b><span>Connect your email in Claude, then ask Claude to "turn on the inbox check". New applications will appear here every hour, with a notification on your phone.</span></div>`;
+  if(!a.lastRun) return `<div class="banner"><b>Inbox check is not running yet.</b><span>New emails appear here automatically once your mailbox is connected.</span></div>`;
+  const raw=String(a.lastSummary||""), trOff=/enable IMAP/i.test(raw);
+  const sum=raw.replace(/Mail sync problem\s*[–-]\s*/,"").replace(/Dialysis Turkey: You are yet to enable IMAP[^;]*;?\s*/i,"").trim();
+  const late=hoursSince(a.lastRun)>1;
+  return `<div class="banner ${late?"warnb":""}"><b>${late?"Inbox check is late":"Inbox checked"} ${ago(a.lastRun)} ago</b><span>${sum?h(sum):"Dialyse Tunisie checked every 5 minutes."}${trOff?" · Dialysis Turkey: hourly check (Zoho free plan)":""}</span></div>`;
 }
 function emailRow(e){
   const late=!e.answered && hoursSince(e.receivedAt)>24;
@@ -563,7 +611,7 @@ function viewPatients(v){
   let list=S.stage==="all"?pts:pts.filter(p=>p.stage===S.stage);
   if(S.q){const q=S.q.toLowerCase(); list=list.filter(p=>(p.name+p.email+p.nationality+p.phone).toLowerCase().includes(q));}
   list.sort((a,b)=>(a.arrival||"9999").localeCompare(b.arrival||"9999"));
-  v.innerHTML=`<div class="head"><h2>Patients</h2><input class="search" id="q" placeholder="Search name, email, phone" value="${h(S.q)}"><button class="btn" id="winBack">Win-back email</button><button class="btn primary" id="newP">New patient</button></div>
+  v.innerHTML=`<div class="head"><h2>Patients</h2><input class="search" id="q" placeholder="Search name, email, phone" value="${h(S.q)}"><button class="btn" id="winBack">Email campaign</button><button class="btn primary" id="newP">New patient</button></div>
   <div class="pipeline">${STAGES.map(([k,l])=>`<button class="stage" data-stage="${k}" aria-pressed="${S.stage===k}"><div class="n">${counts[k]}</div><div class="l">${l}</div></button>`).join("")}</div>
   ${S.stage!=="all"?`<div class="filters"><button data-stage="all">Show all stages</button></div>`:""}
   <section class="panel"><div class="tablewrap"><table class="list"><thead><tr><th>Patient</th><th>Site</th><th>Stage</th><th>Dates</th><th>Sessions</th><th>Documents</th></tr></thead><tbody>
@@ -573,7 +621,7 @@ function viewPatients(v){
    <td><span class="docs">${DOCS.map(([k])=>`<i class="${(p.docs||{})[k]?'on':''}"></i>`).join("")}</span> <span class="sub">${docsDone(p)}/${DOCS.length}</span></td></tr>`).join("")}
   </tbody></table></div>${list.length?"":`<div class="empty">No patients here yet. Create one from an application email, or with “New patient”.</div>`}</section>`;
   $("q").oninput=e=>{S.q=e.target.value; const pos=e.target.selectionStart; viewPatients(v); const q=$("q"); q.focus(); q.setSelectionRange(pos,pos);};
-  $("winBack").onclick=openCampaign; $("newP").onclick=async()=>{ const ref=await db.collection("patients").add({name:"New patient",site:S.site==="ALL"?"TN":S.site,stage:"new",perWeek:3,docs:{},createdAt:nowISO()}); openPatient(ref.id); };
+  $("winBack").onclick=()=>go("campaigns"); $("newP").onclick=async()=>{ const ref=await db.collection("patients").add({name:"New patient",site:S.site==="ALL"?"TN":S.site,stage:"new",perWeek:3,docs:{},createdAt:nowISO()}); openPatient(ref.id); };
 }
 document.addEventListener("click",e=>{
   const st=e.target.closest("[data-stage]"); if(st){ S.stage=S.stage===st.dataset.stage?"all":st.dataset.stage; render(); return; }
@@ -879,7 +927,7 @@ function commsFor(p){ const pk=nameKey(p.name);
 function waLink(p,text){ const d=String(p.phone||"").replace(/[^\d]/g,"").replace(/^00/,""); return d.length>=8?`https://wa.me/${d}?text=${encodeURIComponent(text)}`:""; }
 
 /* ---------- Theme (light by default) ---------- */
-function applyTheme(t){ const r=document.documentElement; if(t==="dark"||t==="light") r.setAttribute("data-theme",t); else r.removeAttribute("data-theme"); const b=$("themeBtn"); if(b) b.textContent=t==="dark"?"Dark":t==="light"?"Light":"Auto"; }
+function applyTheme(t){ const r=document.documentElement; if(t==="dark"||t==="light") r.setAttribute("data-theme",t); else r.removeAttribute("data-theme"); const b=$("themeBtn"); if(b) b.textContent=t==="dark"?"Dark":t==="light"?"Light":"Auto"; if(typeof setThemeColor==="function") setThemeColor(); }
 function initTheme(){ let t="light"; try{ t=localStorage.getItem("dw-theme")||"light"; }catch{} applyTheme(t);
   const b=$("themeBtn"); if(b) b.onclick=()=>{ const cur=document.documentElement.getAttribute("data-theme")||"auto"; const nx=cur==="light"?"dark":cur==="dark"?"auto":"light"; try{localStorage.setItem("dw-theme",nx)}catch{} applyTheme(nx); }; }
 
@@ -941,6 +989,7 @@ function openPatient(id){
     <label class="f">Cover document (PEC)<select id="f_cover">${[["","Not needed"],["requested","Requested"],["received","Received"]].map(([k,l])=>`<option value="${k}" ${(p.cover||"")===k?'selected':''}>${l}</option>`).join("")}</select></label>
     <label class="f">Insurer billing<select id="f_insurerBilling">${[["","Not billed"],["sent","Invoice sent"],["paid","Paid"]].map(([k,l])=>`<option value="${k}" ${(p.insurerBilling||"")===k?'selected':''}>${l}</option>`).join("")}</select></label>
    </div>
+   <label class="chk" style="margin:4px 0"><input type="checkbox" id="f_noMarketing" ${p.noMarketing?"checked":""}> No marketing emails (unsubscribed)</label>
    <label class="f full">Notes<textarea id="f_notes" rows="3">${h(p.notes)}</textarea></label>
    <div class="actions"><button class="btn primary" id="pSave">Save</button><button class="btn danger" id="pDel">Delete patient</button></div>
    ${comms.length?`<div class="section-l">Stays and commissions</div><section class="panel"><ul class="rows">${comms.map(c=>{const r=calcC(c);return `<li><button class="row" data-comm="${c.id}"><span class="dot ${c.status==='paid'?'ok':'warn'}"></span><span style="min-width:0"><div class="t">${fmtDate(c.date)} · ${h(c.center||"")}</div><div class="s">${h(c.sessions)} sessions · ${money(c.totalPaidEuro,c.currency||"EUR")}</div></span><span class="r money">${tnd(r.myProfit)}</span></button></li>`}).join("")}</ul></section>`:""}
@@ -952,7 +1001,7 @@ function openPatient(id){
   ["f_arrival","f_departure","f_perWeek"].forEach(k=>$(k).addEventListener("input",calc)); calc();
   const collect=()=>{ const docs={}; document.querySelectorAll("[data-doc]").forEach(c=>docs[c.dataset.doc]=c.checked);
     const days=[...document.querySelectorAll("[data-day]")].filter(c=>c.checked).map(c=>Number(c.dataset.day));
-    const o={docs,days}; ["name","site","stage","email","phone","nationality","lang","center","city","arrival","departure","perWeek","hours","time","mode","hotel","transfer","home","insurer","caseNumber","cover","insurerBilling","notes"].forEach(k=>o[k]=$("f_"+k).value); o.perWeek=Number(o.perWeek); return o; };
+    const o={docs,days}; ["name","site","stage","email","phone","nationality","lang","center","city","arrival","departure","perWeek","hours","time","mode","hotel","transfer","home","insurer","caseNumber","cover","insurerBilling","notes"].forEach(k=>o[k]=$("f_"+k).value); o.perWeek=Number(o.perWeek); o.noMarketing=!!($("f_noMarketing")&&$("f_noMarketing").checked); return o; };
   $("pSave").onclick=async()=>{ await db.doc("patients/"+id).update({...collect(),updatedAt:nowISO()}); toast("Patient saved"); closeDrawer(); };
   $("pInv").onclick=async()=>{ const o=collect(); await db.doc("patients/"+id).update(o); newInvoice({...p,...o,id}); };
   $("pPlan").onclick=async()=>{ const o=collect(); await db.doc("patients/"+id).update(o); await planSessions({...p,...o,id}); };
@@ -1140,7 +1189,7 @@ function viewSettings(v){
   <div class="actions"><button class="btn primary" id="sSave">Save settings</button>
    ${[...S.emails,...S.patients,...S.invoices].some(x=>x.example)?`<button class="btn danger" id="sEx">Remove example records</button>`:""}</div>
   </div>`;
-  $("sCentres").onclick=openCentres; $("sSave").onclick=async()=>{
+  $("sCentres").onclick=()=>go("centres"); $("sSave").onclick=async()=>{
     const sites=JSON.parse(JSON.stringify(st.sites||{}));
     document.querySelectorAll("[data-s]").forEach(el=>{const [k,f]=el.dataset.s.split("."); sites[k]=sites[k]||{}; sites[k][f]=f==="price"?(el.value===""?"":Number(el.value)):el.value;});
     await db.doc("settings/main").update({sites, company:{...(st.company||{}), legal:$("c_legal").value, bank:$("c_bank").value}}); toast("Settings saved");
@@ -1258,8 +1307,266 @@ function openCompose(o){
   };
 }
 
+/* ================= v2: navigation, centres page, campaigns ================= */
+const ICONS={
+  dashboard:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>',
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
+  patients:'<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M16 4a4 4 0 0 1 0 8M22 21a7 7 0 0 0-4-6.3"/>',
+  planner:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  centres:'<path d="M3 21h18M5 21V7l7-4 7 4v14M10 21v-5h4v5M12 8v4M10 10h4"/>',
+  insurers:'<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/>',
+  invoices:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
+  money:'<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5M12 6v2M12 16v2"/>',
+  campaigns:'<path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8a5 5 0 0 1 0 8M19 5a9 9 0 0 1 0 14"/>',
+  replies:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
+};
+const ico=k=>`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[k]||""}</svg>`;
+const NAV=[
+  ["Daily work",[["dashboard","Dashboard"],["inbox","Inbox"],["patients","Patients"],["planner","Planner"]]],
+  ["Business",[["centres","Centres"],["insurers","Insurers"],["invoices","Invoices"],["money","Commissions"]]],
+  ["Tools",[["campaigns","Campaigns"],["replies","Reply library"],["settings","Settings"]]]
+];
+const NAV_KEYS=NAV.flatMap(g=>g[1].map(x=>x[0]));
+const MAIN4=["dashboard","inbox","patients","planner"];
+function navCount(k){ return k==="inbox"? S.emails.filter(e=>!e.answered && e.kind!=="other" && siteOk(e)).length : 0; }
+function renderNav(){
+  const cur=S.tab==="today"?"dashboard":S.tab;
+  $("tabs").innerHTML=NAV.map(([g,items])=>`<div class="grp">${g}</div>`+items.map(([k,l])=>{ const c=navCount(k);
+    return `<button data-tab="${k}" ${cur===k?'aria-current="page"':''}>${ico(k)}<span>${l}</span>${c?`<span class="count">${c}</span>`:''}</button>`; }).join("")).join("");
+  let b=$("bottomNav"); if(!b){ b=document.createElement("nav"); b.id="bottomNav"; b.setAttribute("aria-label","Main"); document.body.appendChild(b); }
+  const lab={dashboard:"Home",inbox:"Inbox",patients:"Patients",planner:"Planner"};
+  b.innerHTML=MAIN4.map(k=>{ const c=navCount(k); return `<button data-tab="${k}" ${cur===k?'aria-current="page"':''}>${ico(k)}<span>${lab[k]}</span>${c?`<span class="count">${c}</span>`:''}</button>`; }).join("")
+    +`<button data-more="1" ${!MAIN4.includes(cur)?'aria-current="page"':''}>${ico("more")}<span>More</span></button>`;
+  const bar=document.querySelector("header.top .bar"); if(bar) document.documentElement.style.setProperty("--hdr",bar.offsetHeight+"px");
+}
+window.addEventListener("resize",()=>{ const bar=document.querySelector("header.top .bar"); if(bar) document.documentElement.style.setProperty("--hdr",bar.offsetHeight+"px"); });
+document.addEventListener("click",e=>{
+  if(e.target.closest("[data-more]")){
+    drawer(`<header><h3>More</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body"><div class="morelist">${
+      NAV.map(([g,items])=>[g,items.filter(([k])=>!MAIN4.includes(k))]).filter(([,it])=>it.length).map(([g,items])=>`<div class="section-l">${g}</div>`+items.map(([k,l])=>`<button class="moreitem" data-moretab="${k}">${ico(k)}<span>${l}</span></button>`).join("")).join("")}</div></div>`);
+    return;
+  }
+  const m=e.target.closest("[data-moretab]"); if(m){ closeDrawer(); go(m.dataset.moretab); }
+});
+
+/* ---------- status bar colour follows the app theme (no red bar) ---------- */
+function setThemeColor(){
+  const forced=document.documentElement.getAttribute("data-theme");
+  const dark=forced?forced==="dark":matchMedia("(prefers-color-scheme: dark)").matches;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m=>m.setAttribute("content",dark?"#132126":"#FFFFFF"));
+}
+try{ matchMedia("(prefers-color-scheme: dark)").addEventListener("change",setThemeColor); }catch{}
+
+/* ---------- Centres page with search ---------- */
+function patientsAt(name){ const n=S.patients.filter(p=>p.center===name).length; return n?`${n} patient${n>1?"s":""}`:""; }
+function viewCentres(v){
+  const q=(S.cq||"").trim().toLowerCase(), cityF=S.ccity||"";
+  const all=centres().map((c,i)=>({...c,_i:i})).filter(c=>S.site==="ALL"||(c.site||"TN")===S.site);
+  const cities={}; all.forEach(c=>{ const k=c.city||"Other"; cities[k]=(cities[k]||0)+1; });
+  const words=q.split(/\s+/).filter(Boolean);
+  const list=all.filter(c=>(!cityF||(c.city||"Other")===cityF)&&(!words.length||words.every(w=>[c.name,c.city,c.address,c.phone,c.site].join(" ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").includes(w.normalize("NFD").replace(/[̀-ͯ]/g,"")))));
+  const groups={}; list.forEach(c=>{ const k=c.city||"Other"; (groups[k]=groups[k]||[]).push(c); });
+  const keys=Object.keys(groups).sort((a,b)=>a.localeCompare(b));
+  v.innerHTML=`<div class="head"><h2>Dialysis centres</h2><span class="sub">${list.length} of ${all.length} · ${S.site==="ALL"?"all sites":h(siteName(S.site))}</span>
+    <input class="search grow" id="cq" type="search" placeholder="Search a centre, city or street…" value="${h(S.cq||"")}" autocomplete="off"><button class="btn primary" id="cNew">Add centre</button></div>
+  <div class="filters scrollx"><button data-ccity="" aria-pressed="${!cityF}">All cities</button>${Object.entries(cities).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).map(([k,n])=>`<button data-ccity="${h(k)}" aria-pressed="${cityF===k}">${h(k)} · ${n}</button>`).join("")}</div>
+  ${keys.map(k=>`<section class="panel mb"><h3>${h(k)} <span>${groups[k].length} centre${groups[k].length>1?"s":""}</span></h3><ul class="rows">${groups[k].map(c=>`<li><button class="row" data-centre="${c._i}"><span class="site-tag">${h(c.site||"TN")}</span><span style="min-width:0"><div class="t">${h(c.name)}</div><div class="s">${h(c.address||"No address yet")}${c.phone?" · "+h(c.phone):""}</div></span><span class="r">${patientsAt(c.name)}</span></button></li>`).join("")}</ul></section>`).join("")
+   ||`<div class="panel"><div class="empty">No centre matches “${h(S.cq||"")}”. <button class="btn small" id="cClear">Clear search</button></div></div>`}`;
+  const inp=$("cq"); inp.oninput=e=>{ S.cq=e.target.value; const pos=e.target.selectionStart; viewCentres(v); const el=$("cq"); el.focus(); try{el.setSelectionRange(pos,pos);}catch{} };
+  $("cNew").onclick=()=>openCentre(null);
+  if($("cClear")) $("cClear").onclick=()=>{ S.cq=""; S.ccity=""; viewCentres(v); };
+}
+document.addEventListener("click",e=>{
+  const f=e.target.closest("[data-ccity]"); if(f){ S.ccity=f.dataset.ccity; render(); return; }
+  const c=e.target.closest("[data-centre]"); if(c){ openCentre(Number(c.dataset.centre)); }
+});
+async function saveCentres(fn){
+  let list=centres().map(c=>({...c}));
+  try{ const {data}=await window.dwSupabase.from("records").select("data").eq("collection","settings").eq("id","main").maybeSingle(); if(data&&data.data&&Array.isArray(data.data.centers)) list=data.data.centers.map(c=>({...c})); }catch{}
+  fn(list); await db.doc("settings/main").update({centers:list});
+}
+function openCentre(i){
+  const orig=i==null?null:centres()[i];
+  const c=orig?{...orig}:{name:"",site:S.site==="ALL"?"TN":S.site,city:S.ccity||"",address:"",phone:"",defaultTime:"07:00"};
+  const same=x=>orig&&x.name===orig.name&&(x.site||"TN")===(orig.site||"TN");
+  drawer(`<header><h3>${orig?h(orig.name):"New centre"}</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
+   <div class="form">
+    <label class="f full">Name<input id="ce_name" value="${h(c.name)}"></label>
+    <label class="f">Site<select id="ce_site">${Object.values(SITES).map(x=>`<option value="${x.key}" ${(c.site||"TN")===x.key?'selected':''}>${h(x.country)}</option>`).join("")}</select></label>
+    <label class="f">City<input id="ce_city" value="${h(c.city||"")}"></label>
+    <label class="f full">Address (printed on confirmations)<input id="ce_address" value="${h(c.address||"")}"></label>
+    <label class="f">Phone<input id="ce_phone" type="tel" value="${h(c.phone||"")}"></label>
+    <label class="f">Usual first session<input id="ce_defaultTime" type="time" value="${h(c.defaultTime||"07:00")}"></label>
+    <label class="f">Contact person<input id="ce_contact" value="${h(c.contact||"")}"></label>
+    <label class="f">Price per session (agreed)<input id="ce_price" type="number" step="1" value="${h(c.price??"")}"></label>
+    <label class="f full">Notes<textarea id="ce_note" rows="3">${h(c.note||"")}</textarea></label>
+   </div>
+   ${c.source?`<p class="sub" style="margin:0">Found on: ${h(c.source)}</p>`:""}
+   ${orig?`<div class="sub">${patientsAt(orig.name)||"No patient booked here yet"}</div>`:""}
+   <div class="actions"><button class="btn primary" id="ceSave">Save centre</button>${orig?`<button class="btn danger" id="ceDel">Delete</button>`:""}</div></div>`);
+  $("ceSave").onclick=async()=>{
+    const o={}; ["name","site","city","address","phone","defaultTime","contact","price","note"].forEach(k=>o[k]=$("ce_"+k).value.trim()); if(o.price!=="") o.price=Number(o.price);
+    if(!o.name){ toast("Give the centre a name"); return; }
+    await saveCentres(list=>{ const k=list.findIndex(same); if(k>=0) list[k]={...list[k],...o}; else list.push(o); });
+    toast("Centre saved"); closeDrawer();
+  };
+  if($("ceDel")) $("ceDel").onclick=async()=>{ const b=$("ceDel"); if(!b.dataset.sure){ b.dataset.sure=1; b.textContent="Tap again to delete"; return; }
+    await saveCentres(list=>{ const k=list.findIndex(same); if(k>=0) list.splice(k,1); }); toast("Centre deleted"); closeDrawer(); };
+}
+
+/* ---------- Email campaigns ---------- */
+const CG_DAILY=100;
+const CG_STAGES=[["lead","Website contacts"],["new","New requests"],["docs","Waiting documents"],["quote","Quote sent"],["confirmed","Confirmed"],["treatment","In treatment"],["done","Past patients"],["lost","Not going ahead"]];
+const CG_TPL={
+  winter:{label:"Book your holidays early",
+    fr:["Vos vacances en {country} : réservez vos séances de dialyse","Bonjour {name},\n\nLes vacances approchent et les places dans nos centres partenaires partent vite pendant les périodes chargées. Si vous pensez venir en {country}, nous pouvons réserver vos séances dès maintenant.\n\nNous nous occupons du dossier médical avec le centre, des horaires et, si besoin, des transferts. Tarif : à partir de {price} par séance.\n\nRépondez simplement à cet e-mail avec vos dates et la ville souhaitée.\n\nBien cordialement,\n{signature}"],
+    en:["Your holidays in {country}: book your dialysis sessions early","Hello {name},\n\nThe holidays are coming and places in our partner centres go quickly in busy periods. If you are thinking of coming to {country}, we can book your sessions now.\n\nWe handle the medical file with the centre, the session times and, if needed, transfers. Price: from {price} per session.\n\nJust reply to this email with your dates and the city you'd like.\n\nKind regards,\n{signature}"]},
+  back:{label:"Welcome back (past patients)",
+    fr:["Envie de revenir en {country} ?","Bonjour {name},\n\nNous espérons que vous allez bien. Vous avez déjà fait vos séances de dialyse avec nous et ce serait un plaisir de vous accueillir à nouveau.\n\nSi vous préparez un nouveau séjour, envoyez-nous vos dates : nous vérifions les disponibilités et nous vous répondons rapidement.\n\nBien cordialement,\n{signature}"],
+    en:["Fancy coming back to {country}?","Hello {name},\n\nWe hope you are well. You have already had your dialysis sessions with us, and we would be happy to welcome you again.\n\nIf you are planning a new stay, send us your dates: we check availability and get back to you quickly.\n\nKind regards,\n{signature}"]},
+  follow:{label:"Follow-up (open requests)",
+    fr:["Votre demande de dialyse en {country}","Bonjour {name},\n\nVous nous aviez contactés pour des séances de dialyse en {country}. Votre projet est-il toujours d'actualité ?\n\nSi oui, envoyez-nous vos dates et vos documents médicaux : nous réservons votre place et vous envoyons un devis.\n\nBien cordialement,\n{signature}"],
+    en:["Your dialysis request for {country}","Hello {name},\n\nYou contacted us about dialysis sessions in {country}. Are you still planning your trip?\n\nIf so, send us your dates and medical documents: we book your place and send you a quote.\n\nKind regards,\n{signature}"]}
+};
+const CG_FOOT={fr:"\n\n—\nVous recevez cet e-mail car vous avez été en contact avec {site}. Pour ne plus recevoir nos e-mails, répondez simplement STOP.",
+  en:"\n\n—\nYou are receiving this email because you have been in touch with {site}. To stop receiving our emails, just reply STOP."};
+const COUNTRY_FR={Tunisia:"Tunisie",Turkey:"Turquie",Morocco:"Maroc"};
+function cgLang(p){ return langOf(p)==="fr"?"fr":"en"; }
+function cgFill(t,site,p,lang){
+  const s=siteSet(site), country=SITES[site]?.country||"", first=String((p&&p.name)||"").trim().split(/\s+/)[0]||"";
+  const price=s.price?money(s.price,s.currency):(lang==="fr"?"[tarif à confirmer]":"[price to confirm]");
+  return String(t).replaceAll("{name}",first).replaceAll("{site}",siteName(site)).replaceAll("{country}",lang==="fr"?(COUNTRY_FR[country]||country):country)
+    .replaceAll("{price}",price).replaceAll("{phone}",s.phone||"").replaceAll("{signature}",s.signature||(lang==="fr"?"L'équipe "+siteName(site):"The "+siteName(site)+" team"))
+    .replace(/Bonjour ,/,"Bonjour,").replace(/Hello ,/,"Hello,");
+}
+function cgAudience(o){
+  const seen=new Set();
+  return S.patients.filter(p=>{
+    const em=String(p.email||"").trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(em)||seen.has(em)) return false;
+    if(p.noMarketing||p.example||/(^|\s)test(\s|$)/i.test(p.name||"")||/allianz|mutas|assistance|example\./i.test(em)) return false;
+    if((p.site||"TN")!==o.site) return false;
+    if(!o.stages.includes(p.stage||"new")) return false;
+    if(o.lang!=="all"&&cgLang(p)!==o.lang) return false;
+    if(o.nat&&!String(p.nationality||"").toLowerCase().includes(o.nat.toLowerCase())) return false;
+    seen.add(em); return true; });
+}
+function sentToday(){ const t=today(); return S.campaigns.reduce((n,c)=>n+(c.recipients||[]).filter(r=>r.status==="sent"&&String(r.at||"").slice(0,10)===t).length,0); }
+function viewCampaigns(v){
+  const list=[...S.campaigns].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+  v.innerHTML=`<div class="head"><h2>Email campaigns</h2><span class="sub">${sentToday()} of ${CG_DAILY} sent today</span><button class="btn primary" id="cgNew">New campaign</button></div>
+  <div class="banner"><b>How it works</b><span>Each patient gets their own personal email (never a group email with everyone's address). Dialyse Tunisie sends from contact@dialysetunisie.com, up to ${CG_DAILY} a day to protect your mailbox. Every email says how to unsubscribe (reply STOP); tick “No marketing emails” in the patient file when someone does.</span></div>
+  <section class="panel"><h3>Your campaigns <span>newest first</span></h3><ul class="rows">${list.map(c=>{ const r=c.recipients||[], s=r.filter(x=>x.status==="sent").length, f=r.filter(x=>x.status==="failed").length, w=r.filter(x=>x.status==="waiting").length;
+    return `<li><button class="row" data-cg="${c.id}"><span class="dot ${w?"warn":f?"red":"ok"}"></span><span style="min-width:0"><div class="t">${h(c.name)}</div><div class="s">${h(c.subjectFr||c.subjectEn||"")}</div></span><span class="r"><span class="site-tag">${h(c.site)}</span><br>${s}/${r.length} sent${w?` · ${w} waiting`:""}${f?` · ${f} failed`:""}</span></button></li>`; }).join("")||`<li class="empty">No campaign yet. Tap “New campaign” to write your first one.</li>`}</ul></section>`;
+  $("cgNew").onclick=()=>openCampaignEditor();
+}
+document.addEventListener("click",e=>{ const c=e.target.closest("[data-cg]"); if(c) openCampaignRun(c.dataset.cg); });
+function openCampaignEditor(){
+  const site0=S.site==="ALL"||S.site==="MA"?"TN":S.site, excluded=new Set();
+  drawer(`<header><h3>New campaign</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
+   <div class="form">
+    <label class="f full">Campaign name<input id="cg_name" value="Campaign ${fmtDate(nowISO())}"></label>
+    <label class="f">From<select id="cg_site">${Object.values(SITES).filter(x=>!x.soon).map(x=>`<option value="${x.key}" ${site0===x.key?"selected":""}>${h(siteName(x.key))}</option>`).join("")}</select></label>
+    <label class="f">Language<select id="cg_lang"><option value="all">French + English</option><option value="fr">French only</option><option value="en">English only</option></select></label>
+    <div class="f full"><span class="lbl">Who receives it</span><div class="chips">${CG_STAGES.map(([k,l])=>`<label class="chk pill"><input type="checkbox" data-cgst="${k}" ${["lead","done"].includes(k)?"checked":""}> ${l}</label>`).join("")}</div></div>
+    <label class="f full">Nationality contains (optional)<input id="cg_nat" placeholder="e.g. France, Belgium"></label>
+   </div>
+   <div class="panel"><h3>Recipients <span id="cgCount"></span></h3><details style="padding:8px 16px 12px"><summary class="sub" style="cursor:pointer">Show the list (untick anyone you want to leave out)</summary><div id="cgList" class="att" style="margin-top:8px;max-height:260px;overflow:auto"></div></details></div>
+   <div class="section-l">Message</div>
+   <div class="actions">${Object.entries(CG_TPL).map(([k,t])=>`<button class="btn small" data-cgtpl="${k}">${h(t.label)}</button>`).join("")}</div>
+   <p class="sub" style="margin:0">Write a French and an English version: each patient gets the one in their language. You can use {name} (first name), {site}, {country}, {price}, {phone}. The unsubscribe line is added automatically.</p>
+   <div class="form">
+    <label class="f full">Subject (French)<input id="cg_sfr"></label>
+    <label class="f full">Message (French)<textarea id="cg_bfr" rows="9"></textarea></label>
+    <label class="f full">Subject (English)<input id="cg_sen"></label>
+    <label class="f full">Message (English)<textarea id="cg_ben" rows="9"></textarea></label>
+   </div>
+   <div class="panel"><h3>Preview <span id="cgPrevWho"></span></h3><pre id="cgPrev" class="mail" style="margin:0;border:0;white-space:pre-wrap"></pre></div>
+   <div class="actions"><button class="btn" id="cgTest">Send a test to me</button><button class="btn" id="cgCsv">Download list (CSV)</button><button class="btn primary" id="cgGo">Start sending</button></div>
+   <div class="sub" id="cgMsg"></div></div>`);
+  const opts=()=>({site:$("cg_site").value,lang:$("cg_lang").value,nat:$("cg_nat").value.trim(),stages:[...document.querySelectorAll("[data-cgst]:checked")].map(x=>x.dataset.cgst)});
+  const people=()=>cgAudience(opts()).filter(p=>!excluded.has(p.id));
+  const refresh=()=>{
+    const all=cgAudience(opts()), ppl=all.filter(p=>!excluded.has(p.id)), o=opts();
+    $("cgCount").textContent=`${ppl.length} people${o.site!=="TN"?" · send from Brevo or your mailbox":""}`;
+    $("cgList").innerHTML=all.map(p=>`<label class="chk"><input type="checkbox" data-cgp="${p.id}" ${excluded.has(p.id)?"":"checked"}> ${h(p.name||"")} · ${h(p.email)} · ${cgLang(p).toUpperCase()}</label>`).join("")||`<span class="sub">Nobody matches. Tick more groups above.</span>`;
+    const p=ppl[0]||{name:"Marie"}, l=o.lang==="en"?"en":o.lang==="fr"?"fr":(ppl[0]?cgLang(ppl[0]):"fr");
+    const subj=$("cg_s"+l).value, body=$("cg_b"+l).value;
+    $("cgPrevWho").textContent=ppl[0]?`as ${p.name} will see it`:"";
+    $("cgPrev").textContent=body?`Subject: ${cgFill(subj,o.site,p,l)}\n\n${cgFill(body+CG_FOOT[l],o.site,p,l)}`:"Pick a template or write your message above.";
+    const go=$("cgGo"); go.textContent=o.site==="TN"?`Start sending to ${ppl.length}`:"Sending isn't possible from Zoho free – use the CSV"; go.disabled=o.site!=="TN"||!ppl.length; delete go.dataset.sure;
+  };
+  document.querySelector(".drawer").addEventListener("input",refresh);
+  document.querySelector(".drawer").addEventListener("change",e=>{ const c=e.target.closest("[data-cgp]"); if(c){ c.checked?excluded.delete(c.dataset.cgp):excluded.add(c.dataset.cgp); } refresh(); });
+  document.querySelectorAll("[data-cgtpl]").forEach(b=>b.onclick=()=>{ const t=CG_TPL[b.dataset.cgtpl]; $("cg_sfr").value=t.fr[0]; $("cg_bfr").value=t.fr[1]; $("cg_sen").value=t.en[0]; $("cg_ben").value=t.en[1]; if(t.label.includes("past")){ document.querySelectorAll("[data-cgst]").forEach(x=>x.checked=x.dataset.cgst==="done"); } if(t.label.includes("open")){ document.querySelectorAll("[data-cgst]").forEach(x=>x.checked=["lead","new","docs","quote"].includes(x.dataset.cgst)); } refresh(); });
+  const msg=t=>$("cgMsg").textContent=t;
+  const check=()=>{ const o=opts(), ppl=people(), langs=new Set(ppl.map(cgLang));
+    for(const l of langs){ if(!$("cg_s"+l).value.trim()||!$("cg_b"+l).value.trim()){ msg(`Write the ${l==="fr"?"French":"English"} subject and message (some recipients speak ${l==="fr"?"French":"English"}).`); return null; } }
+    if(/\[(tarif|price)[^\]]*\]/i.test(cgFill($("cg_bfr").value+$("cg_ben").value,o.site,{}, "fr"))){ msg("Set the price per session in Settings, or remove {price} from the message."); return null; }
+    return {o,ppl}; };
+  $("cgTest").onclick=async()=>{ const o=opts(); if(o.site!=="TN"){ msg("Tests can only be sent from Dialyse Tunisie."); return; }
+    const me=(await window.dwSupabase.auth.getSession()).data.session?.user?.email; if(!me){ msg("Sign in again."); return; }
+    const l=o.lang==="en"?"en":"fr"; if(!$("cg_s"+l).value.trim()){ msg("Write the message first."); return; }
+    $("cgTest").disabled=true; msg("Sending a test to "+me+"…");
+    try{ await cgSendOne({site:o.site,email:me,name:"",lang:l},{subjectFr:$("cg_sfr").value,bodyFr:$("cg_bfr").value,subjectEn:$("cg_sen").value,bodyEn:$("cg_ben").value,id:"test"}); msg("Test sent to "+me+". Check your inbox."); }catch(e){ msg("Test failed: "+(e.message||e)); }
+    $("cgTest").disabled=false; };
+  $("cgCsv").onclick=async()=>{ const rows=[["EMAIL","FIRSTNAME","LASTNAME","LANGUAGE","COUNTRY","SITE"],...people().map(p=>{ const n=String(p.name||"").trim().split(/\s+/); return [p.email,n[0]||"",n.slice(1).join(" "),cgLang(p),p.nationality||"",p.site||""]; })].map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("\n");
+    if(!downloads){ toast("Downloads aren't available here"); return; } try{ await downloads.save({filename:`campaign-${today()}.csv`,data:rows}); toast("List saved (works with Brevo)"); }catch(e){ toast("Couldn't save the file"); } };
+  $("cgGo").onclick=async()=>{ const go=$("cgGo"), r=check(); if(!r) return;
+    if(!go.dataset.sure){ go.dataset.sure=1; go.textContent=`Tap again to send ${r.ppl.length} emails`; return; }
+    go.disabled=true;
+    const ref=await db.collection("campaigns").add({name:$("cg_name").value.trim()||"Campaign",site:r.o.site,createdAt:nowISO(),audience:r.o,
+      subjectFr:$("cg_sfr").value,bodyFr:$("cg_bfr").value,subjectEn:$("cg_sen").value,bodyEn:$("cg_ben").value,
+      recipients:r.ppl.map(p=>({patientId:p.id,email:String(p.email).trim(),name:p.name||"",lang:cgLang(p),status:"waiting"}))});
+    closeDrawer(); go("campaigns"); runCampaign(ref.id);
+  };
+  refresh();
+}
+async function cgSendOne(r,c){
+  const l=r.lang==="en"?"en":"fr", subj=l==="fr"?(c.subjectFr||c.subjectEn):(c.subjectEn||c.subjectFr), body=l==="fr"?(c.bodyFr||c.bodyEn):(c.bodyEn||c.bodyFr);
+  const p={name:r.name};
+  const {data,error}=await window.dwSupabase.functions.invoke("send-mail",{body:{site:"TN",to:r.email,subject:cgFill(subj,"TN",p,l),text:cgFill(body+CG_FOOT[l],"TN",p,l),campaignId:c.id,patientId:null}});
+  if(error){ let m=error.message; try{ const j=await error.context.json(); m=j.error||m; }catch{} throw new Error(m); }
+  if(data&&data.error) throw new Error(data.error);
+}
+let cgRunning=null;
+window.addEventListener("beforeunload",e=>{ if(cgRunning){ e.preventDefault(); e.returnValue=""; } });
+async function runCampaign(id){
+  if(cgRunning){ toast("Another campaign is already sending"); return; }
+  cgRunning=id;
+  try{
+    for(;;){
+      const c=S.campaigns.find(x=>x.id===id); if(!c) { await new Promise(r=>setTimeout(r,800)); if(!S.campaigns.find(x=>x.id===id)) break; continue; }
+      const rec=(c.recipients||[]).map(x=>({...x})), k=rec.findIndex(x=>x.status==="waiting");
+      if(k<0){ toast(`Campaign finished: ${rec.filter(x=>x.status==="sent").length} sent`); break; }
+      if(sentToday()>=CG_DAILY){ toast(`Daily limit of ${CG_DAILY} reached – continue tomorrow from Campaigns`); break; }
+      try{ await cgSendOne(rec[k],c); rec[k].status="sent"; rec[k].at=nowISO(); }
+      catch(e){ rec[k].status="failed"; rec[k].error=String(e.message||e).slice(0,140); rec[k].at=nowISO(); }
+      await db.doc("campaigns/"+id).update({recipients:rec});
+      const left=rec.filter(x=>x.status==="waiting").length; const p=$("cgProg"); if(p) p.textContent=`${rec.length-left} of ${rec.length} done…`;
+      toast(`Sending: ${rec.length-left} of ${rec.length}`);
+      await new Promise(r=>setTimeout(r,3000));
+    }
+  } finally { cgRunning=null; render(); }
+}
+function openCampaignRun(id){
+  const c=S.campaigns.find(x=>x.id===id); if(!c) return;
+  const r=c.recipients||[], w=r.filter(x=>x.status==="waiting").length, f=r.filter(x=>x.status==="failed");
+  drawer(`<header><h3>${h(c.name)}</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
+   <div class="meta"><span class="site-tag">${h(siteName(c.site))}</span><span>Created ${fmtDate(c.createdAt)}</span><span id="cgProg">${r.length-w} of ${r.length} done</span></div>
+   <div class="actions">${w&&c.site==="TN"?`<button class="btn primary" id="cgCont">${cgRunning===id?"Sending…":"Continue sending ("+w+" waiting)"}</button>`:""}${f.length?`<button class="btn" id="cgRetry">Retry ${f.length} failed</button>`:""}<button class="btn" id="cgDup">Use as a new campaign</button></div>
+   <div class="section-l">French</div><pre class="mail" style="white-space:pre-wrap">${h(c.subjectFr||"")}\n\n${h(c.bodyFr||"")}</pre>
+   <div class="section-l">English</div><pre class="mail" style="white-space:pre-wrap">${h(c.subjectEn||"")}\n\n${h(c.bodyEn||"")}</pre>
+   <div class="section-l">Recipients</div><section class="panel"><ul class="rows">${r.map(x=>`<li><div class="row" style="cursor:default"><span class="dot ${x.status==="sent"?"ok":x.status==="failed"?"red":"warn"}"></span><span style="min-width:0"><div class="t">${h(x.name||x.email)}</div><div class="s">${h(x.email)}${x.error?" · "+h(x.error):""}</div></span><span class="r">${h(x.status)}</span></div></li>`).join("")}</ul></section></div>`);
+  if($("cgCont")) $("cgCont").onclick=()=>{ if(cgRunning) return; $("cgCont").textContent="Sending…"; runCampaign(id); };
+  if($("cgRetry")) $("cgRetry").onclick=async()=>{ await db.doc("campaigns/"+id).update({recipients:r.map(x=>x.status==="failed"?{...x,status:"waiting",error:""}:x)}); closeDrawer(); runCampaign(id); };
+  $("cgDup").onclick=()=>{ openCampaignEditor(); setTimeout(()=>{ $("cg_sfr").value=c.subjectFr||""; $("cg_bfr").value=c.bodyFr||""; $("cg_sen").value=c.subjectEn||""; $("cg_ben").value=c.bodyEn||""; $("cg_site").value=c.site; document.querySelector(".drawer").dispatchEvent(new Event("input")); },50); };
+}
+
 /* ---------- boot ---------- */
-(function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","insurers","invoices","money","replies","settings"].includes(hsh)) S.tab=hsh; })();
+(function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","centres","insurers","invoices","money","campaigns","replies","settings"].includes(hsh)) S.tab=hsh; })();
 initTheme();
 render();
 const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not connected"; $("view").innerHTML=`<div class="empty">Your records are still loading. Check your internet connection.</div>`; } },10000);
@@ -1269,11 +1576,11 @@ const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not con
   const loaded=new Set(), need=["emails","patients","invoices","replies","commissions","sessions","settings"];
   const done=k=>{ loaded.add(k); if(need.every(x=>loaded.has(x))){ clearTimeout(timeout); S.ready=true; $("savestate").textContent="Saved automatically"; } render(); };
   const sub=(col,key)=>db.collection(col).onSnapshot(snap=>{ S[key]=snap.docs.map(d=>({id:d.id,...d.data()})); if(S.drawer){ renderChrome(); if(S.ready) {} } else render(); done(key); if(S.drawer) renderBehind(); },err=>{ $("savestate").textContent="Sync problem: "+err.code; });
-  sub("emails","emails"); sub("patients","patients"); sub("invoices","invoices"); sub("replies","replies"); sub("commissions","commissions"); sub("sessions","sessions");
+  sub("campaigns","campaigns"); sub("emails","emails"); sub("patients","patients"); sub("invoices","invoices"); sub("replies","replies"); sub("commissions","commissions"); sub("sessions","sessions");
   db.doc("settings/main").onSnapshot(s=>{ S.settings=s.exists?(s.data()||{}):{}; done("settings"); },()=>{});
   claude.use("sample").then(x=>sample=x); claude.use("downloads").then(x=>downloads=x); claude.use("assets").then(x=>assets=x);
 })();
-function renderBehind(){ const v=$("view"); if(!S.ready) return; ({dashboard:viewDashboard,today:viewDashboard,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v); }
+function renderBehind(){ const v=$("view"); if(!S.ready) return; ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v); }
 </script>
 </body>
 </html>
