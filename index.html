@@ -452,7 +452,7 @@ function openEmail(id){
       <select id="eKind" class="btn" aria-label="Type">${["application","question","other"].map(k=>`<option ${e.kind===k?'selected':''}>${k}</option>`).join("")}</select>
     </div>
     <div class="section-l">Reply</div>
-    <div class="actions"><button class="btn primary" id="eDraft">${e.draftReply?'Write a new draft':'Draft a reply with Claude'}</button>
+    <div class="actions"><button class="btn primary" id="eDraft">${e.draftReply?'Write a new draft':'Draft a reply'}</button>
       <select id="eTpl" class="btn" aria-label="Insert from reply library"><option value="">Insert from reply library…</option>${S.replies.map(r=>`<option value="${r.id}">${h(r.title)} (${h(r.lang)})</option>`).join("")}</select></div>
     <textarea id="eReply" rows="12" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;width:100%">${h(e.draftReply||"")}</textarea>
     <div class="actions"><button class="btn" id="eCopy">Copy reply</button><button class="btn" id="eSaveDraft">Save draft</button>
@@ -471,8 +471,42 @@ function fillTemplate(t,site){
   return t.replaceAll("{site}",siteName(site)).replaceAll("{price}",s.price?money(s.price,s.currency):"[price per session]")
     .replaceAll("{email}",s.email||"[contact email]").replaceAll("{phone}",s.phone||"[phone / WhatsApp]").replaceAll("{website}",s.domain||SITES[site]?.domain||"");
 }
+/* Built-in draft writer: works without Claude (own app / phone). Uses the reply library, site settings and the patient file. */
+function guessLang(e){
+  const l=String(e.language||"").toLowerCase().slice(0,2); if(["fr","en","ar","de"].includes(l)) return l;
+  const t=String(e.body||"")+" "+(e.subject||"");
+  if(/[\u0600-\u06FF]/.test(t)) return "ar";
+  if(/\b(bonjour|merci|séance|dialyse|je suis|vous|madame|monsieur)\b/i.test(t)) return "fr";
+  if(/\b(hallo|guten|danke|ich|bitte|sehr geehrte)\b/i.test(t)) return "de";
+  return "en";
+}
+function localDraft(e){
+  const lang=guessLang(e), s=siteSet(e.site), site=siteName(e.site), p=S.patients.find(x=>x.id===e.patientId);
+  const TC={fr:"[à confirmer]",en:"[to confirm]",ar:"[للتأكيد]",de:"[zu bestätigen]"}[lang];
+  const price=s.price?money(s.price,s.currency):TC, phone=s.phone||TC, sign=s.signature||({fr:"L'équipe ",en:"The ",ar:"فريق ",de:"Das Team von "}[lang]+site+(lang==="en"?" team":""));
+  const fd=d=>new Date(d).toLocaleDateString({fr:"fr-FR",en:"en-GB",ar:"ar-TN",de:"de-DE"}[lang],{day:"numeric",month:"long"});
+  const nm=(p&&p.name)||e.fromName||"";
+  const dates=p&&p.arrival&&p.departure?{fr:`du ${fd(p.arrival)} au ${fd(p.departure)}`,en:`from ${fd(p.arrival)} to ${fd(p.departure)}`,ar:`من ${fd(p.arrival)} إلى ${fd(p.departure)}`,de:`vom ${fd(p.arrival)} bis ${fd(p.departure)}`}[lang]:"";
+  const n=p?sessionsFor(p):0;
+  const missing=DOCS.filter(([k])=>!(p&&(p.docs||{})[k])).map(d=>d[0]);
+  const docNames={fr:{passport:"Une copie de votre passeport",serology:"Des sérologies récentes (hépatite B, hépatite C, VIH), en général de moins de 3 mois",labs:"Un bilan sanguin récent",prescription:"Votre prescription de dialyse (durée de séance, dialyseur, poids sec, anticoagulation)",report:"Un court compte rendu de votre néphrologue",consent:"Le formulaire de réservation signé"},
+    en:{passport:"A copy of your passport",serology:"Recent serology (hepatitis B, hepatitis C, HIV), usually less than 3 months old",labs:"Recent blood tests",prescription:"Your dialysis prescription (session length, dialyser, dry weight, anticoagulation)",report:"A short medical report from your nephrologist",consent:"The signed booking form"},
+    ar:{passport:"نسخة من جواز السفر",serology:"تحاليل حديثة لالتهاب الكبد B وC وفيروس نقص المناعة (أقل من 3 أشهر عادة)",labs:"تحاليل دم حديثة",prescription:"وصفة الغسيل الكلوي (مدة الجلسة، نوع الفلتر، الوزن الجاف، مضاد التخثر)",report:"تقرير طبي قصير من طبيب الكلى",consent:"استمارة الحجز موقّعة"},
+    de:{passport:"Eine Kopie Ihres Reisepasses",serology:"Aktuelle Serologie (Hepatitis B, Hepatitis C, HIV), meist nicht älter als 3 Monate",labs:"Aktuelle Blutwerte",prescription:"Ihre Dialyseverordnung (Dauer, Dialysator, Trockengewicht, Antikoagulation)",report:"Einen kurzen Bericht Ihres Nephrologen",consent:"Das unterschriebene Buchungsformular"}}[lang];
+  const docList=missing.map((k,i)=>`${i+1}. ${docNames[k]}`).join("\n");
+  const app=e.kind==="application";
+  const T={
+   fr:()=>`Bonjour${nm?" "+nm:""},\n\nMerci d'avoir contacté ${site}.${app?` Nous pouvons organiser vos séances d'hémodialyse${dates?" "+dates:""} dans un centre partenaire ${TC}${n?`, soit environ ${n} séances`:""}.`:` Nous organisons des séances d'hémodialyse pour les patients en vacances en ${SITES[e.site]?.country==="Turkey"?"Turquie":"Tunisie"}.`}\n\nTarif : ${price} par séance. Nous vous envoyons un devis définitif dès réception de votre dossier médical et de vos dates.\n\n${docList?`Pour réserver, merci de nous envoyer :\n${docList}\n\n`:""}Votre néphrologue et notre équipe médicale vérifient le dossier avant toute confirmation. Pour toute question médicale, merci de voir avec votre néphrologue.\n\nVous pouvez tout envoyer en réponse à cet e-mail ou sur WhatsApp : ${phone}.\n\nBien cordialement,\n${sign}`,
+   en:()=>`Hello${nm?" "+nm:""},\n\nThank you for contacting ${site}.${app?` We can arrange your hemodialysis sessions${dates?" "+dates:""} at a partner centre ${TC}${n?`, about ${n} sessions`:""}.`:` We organise hemodialysis sessions for patients on holiday in ${SITES[e.site]?.country}.`}\n\nPrice: ${price} per session. We send a final quote as soon as we have your medical file and your dates.\n\n${docList?`To book, please send us:\n${docList}\n\n`:""}Your nephrologist and our medical team check the file before anything is confirmed. For medical questions, please speak with your own nephrologist.\n\nYou can reply to this email or send everything on WhatsApp: ${phone}.\n\nKind regards,\n${sign}`,
+   ar:()=>`مرحبا${nm?" "+nm:""}،\n\nشكرا لتواصلك مع ${site}.${app?` يمكننا تنظيم جلسات الغسيل الكلوي${dates?" "+dates:""} في مركز شريك ${TC}${n?`، أي حوالي ${n} جلسات`:""}.`:` ننظم جلسات غسيل الكلى للمرضى خلال عطلتهم.`}\n\nالسعر: ${price} للجلسة. نرسل لك عرض السعر النهائي فور استلام ملفك الطبي وتواريخك.\n\n${docList?`للحجز، يرجى إرسال:\n${docList}\n\n`:""}يراجع طبيب الكلى الخاص بك وفريقنا الطبي الملف قبل أي تأكيد. للأسئلة الطبية يرجى استشارة طبيب الكلى الخاص بك.\n\nيمكنك الرد على هذا البريد أو الإرسال عبر واتساب: ${phone}.\n\nمع أطيب التحيات،\n${sign}`,
+   de:()=>`Hallo${nm?" "+nm:""},\n\nvielen Dank für Ihre Nachricht an ${site}.${app?` Wir können Ihre Hämodialyse-Termine${dates?" "+dates:""} in einem Partnerzentrum organisieren ${TC}${n?`, etwa ${n} Behandlungen`:""}.`:` Wir organisieren Hämodialyse für Patienten im Urlaub.`}\n\nPreis: ${price} pro Behandlung. Ein verbindliches Angebot senden wir, sobald wir Ihre Unterlagen und Daten haben.\n\n${docList?`Für die Buchung benötigen wir:\n${docList}\n\n`:""}Ihr Nephrologe und unser medizinisches Team prüfen die Unterlagen vor jeder Bestätigung. Medizinische Fragen klären Sie bitte mit Ihrem Nephrologen.\n\nSie können auf diese E-Mail antworten oder alles per WhatsApp senden: ${phone}.\n\nMit freundlichen Grüßen\n${sign}`};
+  return T[lang]();
+}
 async function draftReply(e){
-  if(!sample){ toast("Claude isn't available in this view. Use the reply library instead."); return; }
+  if(!sample){
+    const ta=$("eReply"); ta.value=localDraft(e); await db.doc("emails/"+e.id).update({draftReply:ta.value});
+    toast("Draft ready. Fill in the [to confirm] parts."); return;
+  }
   const btn=$("eDraft"), ta=$("eReply"); btn.disabled=true; btn.textContent="Writing…";
   const s=siteSet(e.site);
   const lib=S.replies.map(r=>`### ${r.title} (${r.lang})\n${fillTemplate(r.body,e.site)}`).join("\n\n").slice(0,12000);
