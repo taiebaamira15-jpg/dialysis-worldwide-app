@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 <script src="supabase.js"></script>
+<script src="config.js"></script>
 <script src="jspdf.umd.min.js"></script>
 <script>
 /* Dialysis Worldwide – standalone data layer.
@@ -24,7 +25,10 @@
    One table "records" (collection, id, data jsonb) protected by your login. */
 (function(){
   const CFG_KEY="dw-supabase";
-  const cfg=(()=>{ try{ return JSON.parse(localStorage.getItem(CFG_KEY)||"null"); }catch{ return null; } })();
+  const cfg=(()=>{ try{ return JSON.parse(localStorage.getItem(CFG_KEY)||"null"); }catch{ return null; } })()||window.DW_DEFAULT_CFG||null;
+  // remember what kind of link opened the app (invitation / password reset) before Supabase reads it
+  const AUTH_TYPE=(String(location.hash).match(/[#&]type=([a-z_]+)/)||[])[1]||"";
+  const AUTH_ERR=decodeURIComponent((String(location.hash).match(/error_description=([^&]+)/)||[])[1]||"").replace(/\+/g," ");
   const rows=new Map();               // "collection/id" -> data
   const colL=new Map(), docL=new Map(); // listeners
   let sb=null, ready=null, resolveReady;
@@ -82,18 +86,34 @@
       try{ localStorage.setItem(CFG_KEY,JSON.stringify({url,key})); }catch{} location.reload(); };
   }
   function loginScreen(msg){
-    const g=gate(`<p>${msg||"Sign in with the email and password you created in Supabase."}</p>
+    const g=gate(`<p>${msg||"Sign in with your email and password."}</p>
       <form id="g_form" style="display:flex;flex-direction:column;gap:12px"><label>Email<input id="g_email" type="email" autocomplete="username" required></label>
       <label>Password<input id="g_pw" type="password" autocomplete="current-password" required></label>
       <div class="err" id="g_err"></div><button class="btn primary" type="submit">Sign in</button></form>
-      <button class="btn small" id="g_reset" style="align-self:flex-start">Change database connection</button>`);
+      <button class="btn small" id="g_forgot" style="align-self:flex-start">Forgot password?</button>`);
     g.querySelector("#g_form").onsubmit=async e=>{ e.preventDefault(); g.querySelector("#g_err").textContent="Signing in…";
       const {error}=await sb.auth.signInWithPassword({email:g.querySelector("#g_email").value.trim(),password:g.querySelector("#g_pw").value});
-      if(error) g.querySelector("#g_err").textContent=error.message; else start(); };
-    g.querySelector("#g_reset").onclick=()=>{ try{localStorage.removeItem(CFG_KEY)}catch{} location.reload(); };
+      if(error) g.querySelector("#g_err").textContent=error.message==="Invalid login credentials"?"Wrong email or password.":error.message; else start(); };
+    g.querySelector("#g_forgot").onclick=async()=>{ const em=g.querySelector("#g_email").value.trim(), err=g.querySelector("#g_err");
+      if(!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(em)){ err.textContent="Type your email above first, then tap “Forgot password?” again."; return; }
+      err.textContent="Sending…"; try{ await sb.functions.invoke("team",{body:{action:"reset",email:em,lang:(navigator.language||"fr").startsWith("en")?"en":"fr"}}); }catch{}
+      err.textContent="If this email belongs to the team, we've sent a link to choose a new password. Check your inbox (and spam)."; };
+  }
+  function passwordScreen(kind){
+    const welcome=kind==="invite";
+    const g=gate(`<p>${welcome?"Welcome to the team! Choose a password to finish.":"Choose your new password."}</p>
+      <form id="g_pf" style="display:flex;flex-direction:column;gap:12px"><label>New password<input id="g_p1" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label>Repeat it<input id="g_p2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <div class="err" id="g_err"></div><button class="btn primary" type="submit">${welcome?"Join the team":"Save password"}</button></form>`);
+    g.querySelector("#g_pf").onsubmit=async e=>{ e.preventDefault(); const p1=g.querySelector("#g_p1").value, p2=g.querySelector("#g_p2").value, err=g.querySelector("#g_err");
+      if(p1.length<8){ err.textContent="Use at least 8 characters."; return; } if(p1!==p2){ err.textContent="The two passwords are different."; return; }
+      err.textContent="Saving…"; const {error}=await sb.auth.updateUser({password:p1}); if(error){ err.textContent=error.message; return; }
+      try{ await sb.functions.invoke("team",{body:{action:"joined"}}); }catch{}
+      try{ history.replaceState(null,"",location.pathname); }catch{} start(); };
   }
   async function loadAll(){ rows.clear(); let from=0; for(;;){ const {data,error}=await sb.from("records").select("collection,id,data").range(from,from+999); if(error) throw error; data.forEach(r=>rows.set(r.collection+"/"+r.id,r.data)); if(data.length<1000) break; from+=1000; } }
   async function start(){
+    try{ const {data:me}=await sb.functions.invoke("team",{body:{action:"me"}}); window.dwMe=me||null; if(me&&!me.owner&&me.role==="none"){ gate(`<p>Your access to this workspace isn't active. Ask the admin to invite you again.</p><button class="btn primary" id="g_out">Sign out</button>`).querySelector("#g_out").onclick=async()=>{ await sb.auth.signOut(); location.reload(); }; return; } if(me&&!me.owner) sb.functions.invoke("team",{body:{action:"seen"}}).catch(()=>{}); }catch{}
     try{ await loadAll(); }catch(e){ loginScreen("Couldn't read the database: "+(e.message||e)+". Did you run the setup SQL in Supabase?"); return; }
     document.getElementById("gate")?.remove();
     sb.channel("records-live").on("postgres_changes",{event:"*",schema:"public",table:"records"},p=>{
@@ -111,7 +131,7 @@
   function exportBackup(){ const cols={}; for(const [k,v] of rows){ const [c,id]=k.split("/"); (cols[c]=cols[c]||{})[id]=v; }
     downloads.save({filename:`dialysis-worldwide-backup-${new Date().toISOString().slice(0,10)}.json`,data:JSON.stringify({app:"Dialysis Worldwide",exported:new Date().toISOString(),collections:cols})}); }
   function openAccount(){ const a=document.createElement("div"); a.id="acct";
-    a.innerHTML=`<div class="card"><h3 style="margin:0;font-family:var(--f-display)">Account & data</h3>
+    const me=window.dwMe||{}; a.innerHTML=`<div class="card"><h3 style="margin:0;font-family:var(--f-display)">Account & data</h3>${me.email?`<p class="sub" style="margin:0">Signed in as <b>${me.email}</b> · ${me.owner?"owner":me.role}</p>`:""}
       <p class="sub" style="margin:0">Import your data from the Claude hub (the file dialysis-worldwide-backup.json), save a backup, or sign out.</p>
       <label class="btn" style="justify-content:center">Import backup file<input type="file" id="a_imp" accept=".json,application/json" hidden></label>
       <button class="btn" id="a_exp">Download a backup</button><button class="btn" id="a_out">Sign out</button><button class="btn primary" id="a_close">Close</button><div class="sub" id="a_msg"></div></div>`;
@@ -129,7 +149,11 @@
     if(!window.supabase){ gate(`<p class="err">The app couldn't load. Check your internet connection and reload.</p>`); return; }
     sb=window.supabase.createClient(cfg.url,cfg.key,{auth:{persistSession:true,autoRefreshToken:true}});
     window.dwSupabase=sb;
-    const {data}=await sb.auth.getSession(); if(data.session) start(); else loginScreen();
+    const {data}=await sb.auth.getSession();
+    if(AUTH_ERR&&!data.session){ loginScreen("This link has expired or was already used. Ask for a new invitation, or use “Forgot password?”."); return; }
+    if(data.session&&(AUTH_TYPE==="invite"||AUTH_TYPE==="recovery")){ passwordScreen(AUTH_TYPE); return; }
+    if(data.session&&AUTH_TYPE==="magiclink"){ try{ await sb.functions.invoke("team",{body:{action:"joined"}}); }catch{} try{ history.replaceState(null,"",location.pathname); }catch{} }
+    if(data.session) start(); else loginScreen();
   });
   if("serviceWorker" in navigator && location.protocol==="https:"){
     navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(reg=>{
@@ -356,6 +380,10 @@ nav.tabs .grp{display:none} nav.tabs button .ico{display:none}
 table.seo td:not(:first-child),table.seo th:not(:first-child){text-align:right;white-space:nowrap}
 table.seo td{padding:8px 10px;border-top:1px solid var(--line)} table.seo th{padding:6px 10px}
 
+
+.tmact{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:600px){.tmact{justify-content:flex-start;grid-column:2}.rows .row:has(.tmact){grid-template-columns:auto minmax(0,1fr)!important}}
+
 </style>
 
 </head>
@@ -386,7 +414,7 @@ const STAGES = [
   ["confirmed","Confirmed"],["treatment","In treatment"],["done","Completed"]
 ];
 const DOCS = [["passport","Passport copy"],["serology","Serology (HBV, HCV, HIV)"],["labs","Recent blood tests"],["prescription","Dialysis prescription"],["report","Medical report from nephrologist"],["consent","Signed consent / booking form"]];
-const S = {site:"ALL", tab:"dashboard", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], campaigns:[], seo:[], settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
+const S = {site:"ALL", tab:"dashboard", emails:[], patients:[], invoices:[], replies:[], commissions:[], sessions:[], campaigns:[], seo:[], team:null, settings:{}, inboxFilter:"open", stage:"all", q:"", ready:false, drawer:null};
 let db=null, sample=null, downloads=null, assets=null;
 
 const h = s => String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -423,7 +451,7 @@ function render(){
   renderChrome();
   const v=$("view");
   if(!S.ready){ v.innerHTML=`<div class="empty">Loading your records…</div>`; return; }
-  ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,seo:viewSeo,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v);
+  ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,seo:viewSeo,team:viewTeam,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v);
 }
 
 /* ---------- Today ---------- */
@@ -1367,7 +1395,8 @@ const MAIN4=["dashboard","inbox","patients","planner"];
 function navCount(k){ return k==="inbox"? S.emails.filter(e=>!e.answered && e.kind!=="other" && siteOk(e)).length : 0; }
 function renderNav(){
   const cur=S.tab==="today"?"dashboard":S.tab;
-  $("tabs").innerHTML=NAV.map(([g,items])=>`<div class="grp">${g}</div>`+items.map(([k,l])=>{ const c=navCount(k);
+  const NAVV=NAV.map(([g,it])=>[g,it.filter(([k])=>k!=="team"||(typeof isAdmin!=="function"||isAdmin()))]);
+  $("tabs").innerHTML=NAVV.map(([g,items])=>`<div class="grp">${g}</div>`+items.map(([k,l])=>{ const c=navCount(k);
     return `<button data-tab="${k}" ${cur===k?'aria-current="page"':''}>${ico(k)}<span>${l}</span>${c?`<span class="count">${c}</span>`:''}</button>`; }).join("")).join("");
   let b=$("bottomNav"); if(!b){ b=document.createElement("nav"); b.id="bottomNav"; b.setAttribute("aria-label","Main"); document.body.appendChild(b); }
   const lab={dashboard:"Home",inbox:"Inbox",patients:"Patients",planner:"Planner"};
@@ -1379,7 +1408,7 @@ window.addEventListener("resize",()=>{ const bar=document.querySelector("header.
 document.addEventListener("click",e=>{
   if(e.target.closest("[data-more]")){
     drawer(`<header><h3>More</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body"><div class="morelist">${
-      NAV.map(([g,items])=>[g,items.filter(([k])=>!MAIN4.includes(k))]).filter(([,it])=>it.length).map(([g,items])=>`<div class="section-l">${g}</div>`+items.map(([k,l])=>`<button class="moreitem" data-moretab="${k}">${ico(k)}<span>${l}</span></button>`).join("")).join("")}</div></div>`);
+      NAV.map(([g,items])=>[g,items.filter(([k])=>!MAIN4.includes(k)&&(k!=="team"||isAdmin()))]).filter(([,it])=>it.length).map(([g,items])=>`<div class="section-l">${g}</div>`+items.map(([k,l])=>`<button class="moreitem" data-moretab="${k}">${ico(k)}<span>${l}</span></button>`).join("")).join("")}</div></div>`);
     return;
   }
   const m=e.target.closest("[data-moretab]"); if(m){ closeDrawer(); go(m.dataset.moretab); }
@@ -1719,8 +1748,56 @@ document.addEventListener("click",async e=>{ const b=e.target.closest("#seoRefre
   try{ const {data,error}=await window.dwSupabase.functions.invoke("seo-sync",{body:{}}); let m=data&&data.error; if(error){ try{ m=(await error.context.json()).error; }catch{ m=error.message; } }
     toast(m?m:"Updated from Google"); }catch(er){ toast(String(er.message||er)); } b.disabled=false; b.textContent="Refresh now"; });
 
+/* ================= v4: Team ================= */
+ICONS.team='<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 6 4.8"/>';
+NAV[2][1].push(["team","Team"]);
+const ROLE_INFO={admin:["Admin","Everything, including the team and settings"],staff:["Staff","Works in the app: patients, emails, planning, invoices"],viewer:["Viewer","Can look, can't change anything"]};
+const isAdmin=()=>{ const me=window.dwMe; return !me||me.owner||me.role==="admin"; };
+async function teamCall(body){ const {data,error}=await window.dwSupabase.functions.invoke("team",{body}); if(error){ let m=error.message; try{ m=(await error.context.json()).error||m; }catch{} throw new Error(m); } if(data&&data.error) throw new Error(data.error); return data; }
+async function loadTeam(){ const {data,error}=await window.dwSupabase.from("team_members").select("*").order("invited_at",{ascending:true}); if(error) throw error; S.team=data||[]; return S.team; }
+function viewTeam(v){
+  if(!isAdmin()){ v.innerHTML=`<div class="head"><h2>Team</h2></div><section class="panel"><div class="empty">Only admins can manage the team.</div></section>`; return; }
+  const list=S.team;
+  const me=window.dwMe||{};
+  v.innerHTML=`<div class="head"><h2>Team</h2><span class="sub">${list?list.length+1:"…"} people</span><button class="btn primary" id="tmInvite">Invite someone</button></div>
+  <div class="banner"><b>How it works</b><span>Invite someone by email: they get a link from contact@dialysetunisie.com, choose their password and can install the app on their phone or computer. Everyone shares the same patients, emails and planning. Remove someone and their access stops at once.</span></div>
+  <section class="panel"><h3>Members</h3><ul class="rows">
+   <li><div class="row" style="cursor:default"><span class="dot ok"></span><span style="min-width:0"><div class="t">${me.owner?"You":"Owner"} <span class="chip">owner</span></div><div class="s">${h(me.owner?me.email||"":"Taieb Aamira")}</div></span><span class="r">all access</span></div></li>
+   ${list==null?`<li class="empty">Loading…</li>`:list.map(m=>`<li><div class="row" style="cursor:default;grid-template-columns:auto minmax(0,1fr) auto"><span class="dot ${m.status==="active"?"ok":"warn"}"></span>
+     <span style="min-width:0"><div class="t">${h(m.name||m.email)} <span class="chip">${m.status==="active"?"active":"invited"}</span></div><div class="s">${h(m.email)}${m.last_seen?` · last seen ${ago(m.last_seen)} ago`:m.status!=="active"?` · invited ${ago(m.invited_at)} ago`:""}</div></span>
+     <span class="r tmact"><select class="btn small" data-tmrole="${h(m.email)}" aria-label="Role">${Object.entries(ROLE_INFO).map(([k,[l]])=>`<option value="${k}" ${m.role===k?"selected":""}>${l}</option>`).join("")}</select>
+      ${m.status!=="active"?`<button class="btn small" data-tmresend="${h(m.email)}">Resend</button>`:""}<button class="btn small danger" data-tmrm="${h(m.email)}">Remove</button></span></div></li>`).join("")}
+  </ul></section>
+  <section class="panel" style="margin-top:14px"><h3>Roles</h3><ul class="rows">${Object.entries(ROLE_INFO).map(([k,[l,d]])=>`<li><div class="row" style="cursor:default"><span class="chip">${l}</span><span class="s" style="min-width:0">${d}</span><span></span></div></li>`).join("")}</ul></section>`;
+  $("tmInvite").onclick=openInvite;
+  if(list==null) loadTeam().then(()=>{ if(S.tab==="team") render(); }).catch(e=>toast("Couldn't load the team: "+(e.message||e)));
+}
+function openInvite(){
+  drawer(`<header><h3>Invite someone</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
+   <div class="form">
+    <label class="f full">Email<input id="tm_email" type="email" inputmode="email" placeholder="name@example.com"></label>
+    <label class="f">Name<input id="tm_name" placeholder="First name"></label>
+    <label class="f">Email language<select id="tm_lang"><option value="fr">Français</option><option value="en">English</option></select></label>
+    <div class="f full"><span class="lbl">Role</span><div class="att" style="margin-top:6px">${Object.entries(ROLE_INFO).map(([k,[l,d]])=>`<label class="chk"><input type="radio" name="tm_role" value="${k}" ${k==="staff"?"checked":""}> <b>${l}</b> – ${d}</label>`).join("")}</div></div>
+   </div>
+   <div class="actions"><button class="btn primary" id="tmSend">Send invitation</button></div><div class="sub" id="tmMsg"></div></div>`);
+  $("tmSend").onclick=async()=>{ const email=$("tm_email").value.trim(), msg=$("tmMsg"), b=$("tmSend");
+    if(!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)){ msg.textContent="Check the email address."; return; }
+    b.disabled=true; b.textContent="Sending…";
+    try{ await teamCall({action:"invite",email,name:$("tm_name").value.trim(),role:(document.querySelector('[name="tm_role"]:checked')||{}).value||"staff",lang:$("tm_lang").value});
+      toast("Invitation sent to "+email); closeDrawer(); await loadTeam(); render(); }
+    catch(e){ msg.textContent=String(e.message||e); b.disabled=false; b.textContent="Send invitation"; } };
+}
+document.addEventListener("change",async e=>{ const r=e.target.closest("[data-tmrole]"); if(!r) return;
+  try{ await teamCall({action:"role",email:r.dataset.tmrole,role:r.value}); toast("Role changed"); await loadTeam(); render(); }catch(er){ toast(String(er.message||er)); } });
+document.addEventListener("click",async e=>{
+  const rs=e.target.closest("[data-tmresend]"); if(rs){ rs.disabled=true; try{ await teamCall({action:"resend",email:rs.dataset.tmresend}); toast("Invitation sent again"); }catch(er){ toast(String(er.message||er)); } rs.disabled=false; return; }
+  const rm=e.target.closest("[data-tmrm]"); if(rm){ if(!rm.dataset.sure){ rm.dataset.sure=1; rm.textContent="Tap again to remove"; return; }
+    try{ await teamCall({action:"remove",email:rm.dataset.tmrm}); toast("Removed – their access has stopped"); await loadTeam(); render(); }catch(er){ toast(String(er.message||er)); } }
+});
+
 /* ---------- boot ---------- */
-(function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","centres","insurers","invoices","money","campaigns","seo","replies","settings"].includes(hsh)) S.tab=hsh; })();
+(function(){ const hsh=(location.hash||"").slice(1); if(hsh==="today") S.tab="dashboard"; else if(["dashboard","inbox","patients","planner","centres","insurers","invoices","money","campaigns","seo","team","replies","settings"].includes(hsh)) S.tab=hsh; })();
 initTheme();
 render();
 const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not connected"; $("view").innerHTML=`<div class="empty">Your records are still loading. Check your internet connection.</div>`; } },10000);
@@ -1734,7 +1811,7 @@ const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not con
   db.doc("settings/main").onSnapshot(s=>{ S.settings=s.exists?(s.data()||{}):{}; done("settings"); },()=>{});
   claude.use("sample").then(x=>sample=x); claude.use("downloads").then(x=>downloads=x); claude.use("assets").then(x=>assets=x);
 })();
-function renderBehind(){ const v=$("view"); if(!S.ready) return; ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,seo:viewSeo,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v); }
+function renderBehind(){ const v=$("view"); if(!S.ready) return; ({dashboard:viewDashboard,today:viewDashboard,centres:viewCentres,campaigns:viewCampaigns,seo:viewSeo,team:viewTeam,inbox:viewInbox,patients:viewPatients,invoices:viewInvoices,money:viewMoney,planner:viewPlanner,insurers:viewInsurers,replies:viewReplies,settings:viewSettings}[S.tab]||viewDashboard)(v); }
 </script>
 </body>
 </html>
