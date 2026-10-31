@@ -42,7 +42,9 @@
   function docRef(path){ return { id:path.split("/").pop(), path,
     get:async()=>{ await ready; return snapDoc(path); },
     set:async d=>{ await ready; await write(path,clone(d)); },
-    update:async p=>{ await ready; await write(path,applyPatch(rows.get(path)||{},p)); },
+    update:async p=>{ await ready; const [c,i]=path.split("/"); let base=rows.get(path)||{};
+      try{ const {data}=await sb.from("records").select("data").eq("collection",c).eq("id",i).maybeSingle(); if(data&&data.data) base=data.data; }catch{}
+      await write(path,applyPatch(base,p)); },
     delete:async()=>{ await ready; await remove(path); },
     onSnapshot:(next)=>{ (docL.get(path)||docL.set(path,[]).get(path)).push(next); ready.then(()=>next(snapDoc(path))); return ()=>docL.set(path,(docL.get(path)||[]).filter(f=>f!==next)); } }; }
   function colRef(col){ return { path:col,
@@ -97,6 +99,7 @@
       const r=p.eventType==="DELETE"?p.old:p.new; if(!r||!r.collection) return; const path=r.collection+"/"+r.id;
       if(p.eventType==="DELETE") rows.delete(path); else rows.set(path,r.data); notify(path); }).subscribe();
     addAccountButton(); resolveReady();
+    let lastSync=Date.now(); document.addEventListener("visibilitychange",async()=>{ if(document.visibilityState!=="visible"||Date.now()-lastSync<60000) return; lastSync=Date.now(); try{ const before=new Set(rows.keys()); await loadAll(); new Set([...before,...rows.keys()].map(k=>k.split("/")[0])).forEach(col=>notify(col+"/_")); notify("settings/main"); }catch(e){ console.error(e); } });
     if(![...rows.keys()].some(k=>k.startsWith("patients/"))) setTimeout(openAccount,400);
   }
   /* ---------- account: backup, import, sign out ---------- */
@@ -1140,11 +1143,11 @@ function viewSettings(v){
   $("sCentres").onclick=openCentres; $("sSave").onclick=async()=>{
     const sites=JSON.parse(JSON.stringify(st.sites||{}));
     document.querySelectorAll("[data-s]").forEach(el=>{const [k,f]=el.dataset.s.split("."); sites[k]=sites[k]||{}; sites[k][f]=f==="price"?(el.value===""?"":Number(el.value)):el.value;});
-    await db.doc("settings/main").set({...st, sites, company:{legal:$("c_legal").value, bank:$("c_bank").value}}); toast("Settings saved");
+    await db.doc("settings/main").update({sites, company:{...(st.company||{}), legal:$("c_legal").value, bank:$("c_bank").value}}); toast("Settings saved");
   };
   $("logoIn").onchange=async ev=>{ const f=ev.target.files[0]; if(!f) return;
     if(!assets){ toast("Uploading isn't available in this view"); return; }
-    try{ toast("Uploading…"); const r=await assets.upload(f); await db.doc("settings/main").set({...S.settings, logoId:r.id, logoUrl:r.url}); toast("Logo saved"); }catch(e){ toast("Upload failed: "+(e.message||e.code)); } };
+    try{ toast("Uploading…"); const r=await assets.upload(f); await db.doc("settings/main").update({logoId:r.id, logoUrl:r.url}); toast("Logo saved"); }catch(e){ toast("Upload failed: "+(e.message||e.code)); } };
   if($("sEx")) $("sEx").onclick=async()=>{ const b=$("sEx"); if(!b.dataset.sure){b.dataset.sure=1;b.textContent="Click again to remove examples";return;}
     for(const [col,arr] of [["emails",S.emails],["patients",S.patients],["invoices",S.invoices]]) for(const x of arr.filter(y=>y.example)) await db.doc(col+"/"+x.id).delete();
     toast("Examples removed"); };
