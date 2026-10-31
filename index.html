@@ -127,7 +127,16 @@
     window.dwSupabase=sb;
     const {data}=await sb.auth.getSession(); if(data.session) start(); else loginScreen();
   });
-  if("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
+  if("serviceWorker" in navigator && location.protocol==="https:"){
+    navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(reg=>{
+      const check=()=>reg.update().catch(()=>{});
+      document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") check(); });
+      setInterval(check,30*60*1000);
+    }).catch(()=>{});
+    // a new version took over: reload once so the screen shows it
+    let reloaded=false; const hadController=!!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(!hadController||reloaded) return; if(typeof S!=="undefined"&&S.drawer){ window.dwToast&&dwToast("App updated – it refreshes next time you open it"); return; } reloaded=true; location.reload(); });
+  }
 })();
 
 </script>
