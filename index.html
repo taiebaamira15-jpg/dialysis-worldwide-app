@@ -18,6 +18,7 @@
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 <script src="supabase.js"></script>
 <script src="config.js"></script>
+<script src="portal.js"></script>
 <script src="jspdf.umd.min.js"></script>
 <script>
 /* Dialysis Worldwide – standalone data layer.
@@ -113,6 +114,8 @@
   }
   async function loadAll(){ rows.clear(); let from=0; for(;;){ const {data,error}=await sb.from("records").select("collection,id,data").range(from,from+999); if(error) throw error; data.forEach(r=>rows.set(r.collection+"/"+r.id,r.data)); if(data.length<1000) break; from+=1000; } }
   async function start(){
+    // partner dialysis centres get their own space (portal.js); they never load the main data
+    try{ const {data:pm}=await sb.rpc("portal_me"); if(pm&&window.dwPortal){ document.getElementById("gate")?.remove(); window.dwPortal(sb,pm); return; } }catch(e){ console.warn("portal check",e); }
     try{ const {data:me}=await sb.functions.invoke("team",{body:{action:"me"}}); window.dwMe=me||null; if(me&&!me.owner&&me.role==="none"){ gate(`<p>Your access to this workspace isn't active. Ask the admin to invite you again.</p><button class="btn primary" id="g_out">Sign out</button>`).querySelector("#g_out").onclick=async()=>{ await sb.auth.signOut(); location.reload(); }; return; } if(me&&!me.owner) sb.functions.invoke("team",{body:{action:"seen"}}).catch(()=>{}); }catch{}
     try{ await loadAll(); }catch(e){ loginScreen("Couldn't read the database: "+(e.message||e)+". Did you run the setup SQL in Supabase?"); return; }
     document.getElementById("gate")?.remove();
@@ -999,6 +1002,7 @@ function viewToday(v){
 function openPatient(id){
   const p=S.patients.find(x=>x.id===id); if(!p){ setTimeout(()=>{ if(S.patients.find(x=>x.id===id)) openPatient(id); },700); return; }
   const mails=S.emails.filter(e=>e.patientId===id), invs=S.invoices.filter(i=>i.patientId===id), sess=patientSessions(id), comms=commsFor(p);
+  if(p.centreReply&&p.centreReply.seen===false) db.doc("patients/"+id).update({centreReply:{...p.centreReply,seen:true}}).catch(()=>{});
   const s=siteSet(p.site), pat=dayPattern(p);
   const lang=langOf(p), hello=lang==="fr"?`Bonjour ${p.name}, c'est l'équipe ${siteName(p.site)}.`:lang==="de"?`Hallo ${p.name}, hier ist das Team von ${siteName(p.site)}.`:`Hello ${p.name}, this is the ${siteName(p.site)} team.`;
   const wa=waLink(p,hello);
@@ -1028,6 +1032,7 @@ function openPatient(id){
     <label class="f">Home hospital / nephrologist<input id="f_home" value="${h(p.home||"")}"></label>
    </div>
    <div class="calc" id="calc"></div>
+   ${centreReplyHtml(p.centreReply)}
    <div class="section-l">Sessions · ${sess.length} planned</div>
    ${sess.length?`<section class="panel"><ul class="rows">${sess.map(x=>`<li><button class="row" data-session="${x.id}"><span class="money" style="font-weight:700">${h(x.time||"--:--")}</span><span style="min-width:0"><div class="t">${DAYN[dow(x.date)]} ${fmtDate(x.date)}</div><div class="s">${h(x.center||"No centre")}</div></span><span class="r">${h(x.status)}</span></button></li>`).join("")}</ul></section>`:`<p class="sub" style="margin:0">No sessions yet. Set dates, days and centre, save, then “Plan sessions”.</p>`}
    <div class="section-l">Medical file · ${docsDone(p)}/${DOCS.length} received</div>
@@ -1274,6 +1279,8 @@ async function copy(t){ try{ await navigator.clipboard.writeText(t); toast("Repl
 function viewDashboard(v){
   viewToday(v);
   const h2=v.querySelector(".head h2"); if(h2) h2.textContent="Dashboard";
+  const cr=S.patients.filter(p=>siteOk(p)&&p.centreReply&&p.centreReply.seen===false);
+  if(cr.length&&h2){ const L={accept:"accepted",refuse:"refused",propose:"proposed other times"}; h2.closest(".head").insertAdjacentHTML("afterend",`<div class="banner"><b>${cr.length} new answer${cr.length>1?"s":""} from centres:</b> ${cr.map(p=>`<button class="btn small" data-patient="${p.id}">${h(p.center||"Centre")} ${L[p.centreReply.action]||""} · ${h(p.name)}</button>`).join(" ")}</div>`); }
   const em=S.emails.filter(e=>siteOk(e)&&e.kind!=="other").sort((a,b)=>new Date(b.receivedAt||0)-new Date(a.receivedAt||0));
   const latest=`<section class="panel latest"><h3>Latest submissions <span>newest first</span></h3>
     <ul class="rows">${em.slice(0,10).map(latestRow).join("")||`<li class="empty">No submissions yet.</li>`}</ul>
@@ -1468,6 +1475,7 @@ function openCentre(i){
    </div>
    ${c.source?`<p class="sub" style="margin:0">Found on: ${h(c.source)}</p>`:""}
    ${orig?`<div class="sub">${patientsAt(orig.name)||"No patient booked here yet"}</div>`:""}
+   ${orig?`<div class="section-l">Partner portal</div><div id="ce_portal" class="sub">Loading…</div>`:""}
    <div class="actions"><button class="btn primary" id="ceSave">Save centre</button>${orig?`<button class="btn danger" id="ceDel">Delete</button>`:""}</div></div>`);
   $("ceSave").onclick=async()=>{
     const o={}; ["name","site","city","address","phone","defaultTime","contact","price","note"].forEach(k=>o[k]=$("ce_"+k).value.trim()); if(o.price!=="") o.price=Number(o.price);
@@ -1477,7 +1485,27 @@ function openCentre(i){
   };
   if($("ceDel")) $("ceDel").onclick=async()=>{ const b=$("ceDel"); if(!b.dataset.sure){ b.dataset.sure=1; b.textContent="Tap again to delete"; return; }
     await saveCentres(list=>{ const k=list.findIndex(same); if(k>=0) list.splice(k,1); }); toast("Centre deleted"); closeDrawer(); };
+  if(orig) centrePortalBox(orig);
 }
+/* ---------- Partner portal access (centre accounts see only their own patients, via portal_data) ---------- */
+async function centrePortalCall(body){ const {data,error}=await window.dwSupabase.functions.invoke("centre-portal",{body}); if(error){ let m=error.message; try{ m=(await error.context.json()).error||m; }catch{} throw new Error(m); } if(data&&data.error) throw new Error(data.error); return data; }
+async function centrePortalBox(c){
+  const box=$("ce_portal"); if(!box) return;
+  let users=[]; try{ const {data,error}=await window.dwSupabase.from("centre_users").select("*").eq("centre",c.name).neq("status","removed").order("invited_at"); if(error) throw error; users=data||[]; }
+  catch(e){ box.innerHTML=`Partner portal isn't set up in the database yet.`; return; }
+  const can=isAdmin()||(window.dwMe&&window.dwMe.role==="staff");
+  box.innerHTML=`<p style="margin:0 0 8px">The centre signs in and sees only the patients you book here (dates, session times, hotel, treatment). It can accept or propose other times, and sees its earnings and the commission it owes. It never sees emails, phone numbers, notes, insurers or what the patient paid you.</p>
+   ${users.length?`<ul class="rows">${users.map(u=>`<li><div class="row" style="cursor:default"><span class="dot ${u.status==="active"?"ok":"warn"}"></span><span style="min-width:0"><div class="t">${h(u.name||u.email)}</div><div class="s">${h(u.email)} · ${u.status==="active"?"active since "+fmtDate(u.joined_at):"invited "+fmtDate(u.invited_at)}</div></span>
+     ${can?`<span class="r"><button class="btn small" data-cpre="${h(u.email)}">Resend</button> <button class="btn small danger" data-cprm="${h(u.email)}">Remove</button></span>`:""}</div></li>`).join("")}</ul>`:""}
+   ${can?`<div class="form" style="margin-top:8px"><label class="f">Contact email<input id="cp_email" type="email" placeholder="contact@centre.tn"></label><label class="f">Contact name<input id="cp_name" value="${h(c.contact||"")}"></label></div>
+   <div class="actions"><button class="btn" id="cp_inv">${users.length?"Invite another person":"Give portal access"}</button></div>`:""}`;
+  const invite=async(email,name)=>{ toast("Sending invitation…"); try{ await centrePortalCall({action:"invite",email,name,centre:c.name,site:c.site||"TN"}); toast("Invitation sent to "+email); centrePortalBox(c); }catch(e){ toast(String(e.message||e)); } };
+  if($("cp_inv")) $("cp_inv").onclick=()=>{ const em=$("cp_email").value.trim(); if(!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(em)){ toast("Type the centre's email"); return; } invite(em,$("cp_name").value.trim()); };
+  box.querySelectorAll("[data-cpre]").forEach(b=>b.onclick=()=>{ const u=users.find(x=>x.email===b.dataset.cpre); invite(u.email,u.name||""); });
+  box.querySelectorAll("[data-cprm]").forEach(b=>b.onclick=async()=>{ if(!b.dataset.sure){ b.dataset.sure=1; b.textContent="Tap again"; return; } try{ await centrePortalCall({action:"remove",email:b.dataset.cprm}); toast("Access removed"); centrePortalBox(c); }catch(e){ toast(String(e.message||e)); } });
+}
+function centreReplyHtml(r){ if(!r||!r.action) return ""; const L={accept:["Accepted","ok"],refuse:["Refused","warn"],propose:["Other times proposed","warn"]}[r.action]||[r.action,""];
+  return `<div class="banner" style="margin:0"><b>Centre answer: <span class="chip ${L[1]}">${L[0]}</span></b> <span class="sub">${fmtDate(r.at)}${r.by?" · "+h(r.by):""}</span>${r.note?`<div style="margin-top:4px">“${h(r.note)}”</div>`:""}${(r.times||[]).length?`<div class="sub" style="margin-top:4px">Proposed: ${(r.times||[]).map(t=>fmtDate(t.date)+" "+h(t.time||"")).join(" · ")}</div>`:""}</div>`; }
 
 /* ---------- Email campaigns ---------- */
 const CG_DAILY=100;
