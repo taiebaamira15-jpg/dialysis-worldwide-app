@@ -52,7 +52,7 @@ function isServer(req: Request) {
   if (key && jwt === key) return true;
   try { return JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).role === "service_role"; } catch { return false; }
 }
-const VISIBLE = ["docs", "quote", "confirmed", "treatment"];
+const visible = (p: any, centre: string) => !!p && p.center === centre && p.sentToCentre?.centre === centre && p.stage !== "done";
 const frDate = (d?: string) => { if (!d) return "—"; const t = new Date(d + "T12:00:00Z"); return isNaN(+t) ? d : t.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }); };
 const shortName = (n?: string) => { const w = String(n || "Patient").trim().split(/\s+/); return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0]; };
 
@@ -88,15 +88,60 @@ function notifyEmail(centre: string, contact: string, items: { kind: string; p: 
   return { subject, html, text };
 }
 
+async function teamEmail() {
+  return (await sb.auth.admin.getUserById(OWNER)).data.user?.email || Deno.env.get("HOSTINGER_IMAP_USER") || "contact@dialysetunisie.com";
+}
+
+// the centre answered: email the team at once
+async function flushReplies(rows: any[]) {
+  let sent = 0;
+  for (const r of rows) {
+    const { data: rec } = await sb.from("records").select("data").eq("collection", "patients").eq("id", r.patient_id).maybeSingle();
+    const p = rec?.data, a = p?.centreReply;
+    if (p && a) {
+      const L: Record<string, string> = { accept: "a accepté", refuse: "a refusé", propose: "propose d'autres horaires pour" };
+      const subject = `${r.centre} ${L[a.action] || "a répondu pour"} ${shortName(p.name)}`;
+      const times = (a.times || []).map((t: any) => `${frDate(t.date)}${t.time ? " à " + t.time : ""}`);
+      const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#14262B;line-height:1.55">
+       <p style="font-size:18px;font-weight:700">${esc(subject)}</p>
+       <p>Patient : <b>${esc(p.name || "")}</b> · ${esc(frDate(p.arrival))} → ${esc(frDate(p.departure))}</p>
+       ${a.note ? `<p>Message du centre : “${esc(a.note)}”</p>` : ""}
+       ${times.length ? `<p>Horaires proposés :</p><ul>${times.map((x: string) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+       <p style="margin:22px 0"><a href="${APP}" style="background:#3B4248;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;display:inline-block">Ouvrir Dialysis Worldwide</a></p>
+       <p style="color:#8EA2A8;font-size:13px">Réponse envoyée par ${esc(a.by || r.centre)}.</p></div>`;
+      const text = `${subject}\nPatient : ${p.name || ""} · ${frDate(p.arrival)} → ${frDate(p.departure)}` + (a.note ? `\nMessage : ${a.note}` : "") + (times.length ? `\nHoraires proposés :\n- ${times.join("\n- ")}` : "") + `\n\n${APP}`;
+      await mail(await teamEmail(), subject, html, text); sent++;
+    }
+    await sb.from("centre_notify_queue").update({ sent_at: new Date().toISOString() }).eq("id", r.id);
+  }
+  return sent;
+}
+
+// "Send patient for confirmation": email the centre right away
+async function sendPatient(pid: string) {
+  const { data: rec } = await sb.from("records").select("data").eq("collection", "patients").eq("id", pid).maybeSingle();
+  const p = rec?.data, centre = p?.sentToCentre?.centre;
+  if (!p || !centre || p.center !== centre) throw new Error("Choose the centre and save the patient first.");
+  const { data: users } = await sb.from("centre_users").select("email,name").eq("centre", centre).neq("status", "removed");
+  if (!users?.length) throw new Error(`${centre} has no partner access yet. Invite the centre from the Centres page first.`);
+  const { data: ses } = await sb.from("records").select("data").eq("collection", "sessions").eq("data->>patientId", pid);
+  const sessions = (ses || []).map((x) => x.data).filter((x) => x.center === centre).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  for (const u of users) { const m = notifyEmail(centre, u.name || "", [{ kind: "new", p, sessions }]); await mail(u.email, m.subject, m.html, m.text); }
+  return users.length;
+}
+
 async function flush() {
-  const { data: q, error } = await sb.from("centre_notify_queue").select("id,centre,patient_id,kind,created_at").is("sent_at", null).order("id").limit(500);
+  const { data: all, error } = await sb.from("centre_notify_queue").select("id,centre,patient_id,kind,created_at").is("sent_at", null).order("id").limit(500);
   if (error) throw error;
-  if (!q?.length) return { sent: 0 };
+  if (!all?.length) return { sent: 0 };
+  const replies = await flushReplies(all.filter((r) => r.kind === "reply"));
+  const q = all.filter((r) => r.kind !== "reply");
+  if (!q.length) return { sent: replies };
   // wait until a patient has had no new change for 2 minutes, so a burst of edits makes one email
   const quiet = Date.now() - 2 * 60 * 1000, groups = new Map<string, any[]>();
   for (const r of q) { const k = r.centre + "\u0000" + r.patient_id; (groups.get(k) || groups.set(k, []).get(k)!).push(r); }
   const ready = [...groups.values()].filter((g) => Math.max(...g.map((r) => +new Date(r.created_at))) < quiet);
-  if (!ready.length) return { sent: 0, waiting: groups.size };
+  if (!ready.length) return { sent: replies, waiting: groups.size };
   const byCentre = new Map<string, { ids: number[]; pid: string; kind: string }[]>();
   for (const g of ready) (byCentre.get(g[0].centre) || byCentre.set(g[0].centre, []).get(g[0].centre)!)
     .push({ ids: g.map((r) => r.id), pid: g[0].patient_id, kind: g.some((r) => r.kind === "new") ? "new" : "change" });
@@ -106,7 +151,7 @@ async function flush() {
     const { data: pats } = await sb.from("records").select("id,data").eq("collection", "patients").in("id", list.map((l) => l.pid));
     const { data: ses } = await sb.from("records").select("data").eq("collection", "sessions").in("data->>patientId", list.map((l) => l.pid));
     const items = list.map((l) => ({ pid: l.pid, kind: l.kind, p: pats?.find((x) => x.id === l.pid)?.data, sessions: [] as any[] }))
-      .filter((i) => i.p && i.p.center === centre && VISIBLE.includes(i.p.stage));
+      .filter((i) => visible(i.p, centre));
     for (const i of items) i.sessions = (ses || []).map((s) => s.data).filter((s) => s.patientId === i.pid && s.center === centre)
       .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
     if (items.length) {
@@ -115,7 +160,7 @@ async function flush() {
     }
     await sb.from("centre_notify_queue").update({ sent_at: new Date().toISOString() }).in("id", ids);
   }
-  return { sent };
+  return { sent: sent + replies };
 }
 
 Deno.serve(async (req) => {
@@ -124,7 +169,7 @@ Deno.serve(async (req) => {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "");
     // cron tick (mail_tick insert) or manual flush with the server key
-    if ((b.table === "mail_tick" || action === "flush") && isServer(req)) return json({ ok: true, ...(await flush()) });
+    if ((b.table === "mail_tick" || b.table === "centre_notify_queue" || action === "flush") && isServer(req)) return json({ ok: true, ...(await flush()) });
     const me = await caller(req);
     if (!me) return json({ error: "Sign in again." }, 401);
 
@@ -151,6 +196,11 @@ Deno.serve(async (req) => {
       const m = inviteEmail(centre, name, data.properties.action_link);
       await mail(email, m.subject, m.html, m.text);
       return json({ ok: true });
+    }
+
+    if (action === "send") {
+      const n = await sendPatient(String(b.patientId || ""));
+      return json({ ok: true, sent: n });
     }
 
     if (action === "remove") {
