@@ -1067,6 +1067,7 @@ function openPatient(id){
     <label class="f">Home hospital / nephrologist<input id="f_home" value="${h(p.home||"")}"></label>
    </div>
    <div class="calc" id="calc"></div>
+   <div id="sendBox"></div>
    ${centreReplyHtml(p.centreReply)}
    <div class="section-l">Sessions · ${sess.length} planned</div>
    ${sess.length?`<section class="panel"><ul class="rows">${sess.map(x=>`<li><button class="row" data-session="${x.id}"><span class="money" style="font-weight:700">${h(x.time||"--:--")}</span><span style="min-width:0"><div class="t">${DAYN[dow(x.date)]} ${fmtDate(x.date)}</div><div class="s">${h(x.center||"No centre")}</div></span><span class="r">${h(x.status)}</span></button></li>`).join("")}</ul></section>`:`<p class="sub" style="margin:0">No sessions yet. Set dates, days and centre, save, then “Plan sessions”.</p>`}
@@ -1097,6 +1098,7 @@ function openPatient(id){
   $("pPlan").onclick=async()=>{ const o=collect(); await db.doc("patients/"+id).update(o); await planSessions({...p,...o,id}); };
   $("pConf").onclick=async()=>{ const o=collect(); await db.doc("patients/"+id).update(o); await confirmPdf({...p,...o,id}); };
   $("pMail").onclick=async()=>{ const o=collect(); await db.doc("patients/"+id).update(o); const q={...p,...o,id}; openCompose({site:q.site,to:q.email,subject:siteName(q.site),text:"",patientId:id}); };
+  sendBox(p,collect);
   $("pDel").onclick=()=>{ const b=$("pDel"); if(b.dataset.sure){ db.doc("patients/"+id).delete(); closeDrawer(); toast("Patient deleted"); } else { b.dataset.sure=1; b.textContent="Click again to delete"; } };
 }
 
@@ -1538,6 +1540,41 @@ async function centrePortalBox(c){
   if($("cp_inv")) $("cp_inv").onclick=()=>{ const em=$("cp_email").value.trim(); if(!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(em)){ toast("Type the centre's email"); return; } invite(em,$("cp_name").value.trim()); };
   box.querySelectorAll("[data-cpre]").forEach(b=>b.onclick=()=>{ const u=users.find(x=>x.email===b.dataset.cpre); invite(u.email,u.name||""); });
   box.querySelectorAll("[data-cprm]").forEach(b=>b.onclick=async()=>{ if(!b.dataset.sure){ b.dataset.sure=1; b.textContent="Tap again"; return; } try{ await centrePortalCall({action:"remove",email:b.dataset.cprm}); toast("Access removed"); centrePortalBox(c); }catch(e){ toast(String(e.message||e)); } });
+}
+/* "Send patient for confirmation": the patient appears in the centre's portal and the centre gets an email */
+async function sendBox(p,collect){
+  const box=$("sendBox"); if(!box) return;
+  const st=p.sentToCentre;
+  if(st&&st.centre){
+    const r=p.centreReply, wait=!r||!r.action;
+    box.innerHTML=`<div class="banner" style="margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn" disabled>✓ Sent to ${h(st.centre)}</button>
+      <span class="sub">${fmtDate(st.at)} · ${wait?"waiting for the centre's confirmation":"the centre answered (below)"}</span></div>`;
+    const fc=$("f_center"); if(fc){ fc.disabled=true; fc.title="Already sent to "+st.centre; }
+    return;
+  }
+  let list=[]; try{ const {data}=await window.dwSupabase.from("centre_users").select("centre,status"); list=[...new Set((data||[]).filter(x=>x.status!=="removed").map(x=>x.centre))]; }catch{}
+  if(!$("sendBox")) return;
+  const cur=($("f_center")&&$("f_center").value)||p.center||"";
+  box.innerHTML=`<div class="banner" style="margin:0"><b>Send to a centre for confirmation</b>
+    <div class="actions" style="margin-top:8px;align-items:center">
+      ${list.length?`<select id="sbCentre">${list.map(c=>`<option ${c===cur?"selected":""}>${h(c)}</option>`).join("")}</select><button class="btn primary" id="sbSend">Send patient for confirmation</button>`
+        :`<span class="sub">No centre has partner access yet. Invite a centre from its page in Centres, then come back here.</span>`}
+    </div><div class="sub" id="sbMsg" style="margin-top:6px">The centre sees this patient in its space and gets an email. They can accept, refuse or propose other times.</div></div>`;
+  if(!list.length) return;
+  $("sbSend").onclick=async()=>{
+    const btn=$("sbSend"), msg=$("sbMsg"), centre=$("sbCentre").value;
+    const o=collect(); if(!o.arrival||!o.departure){ msg.textContent="Add the arrival and departure dates first."; return; }
+    btn.disabled=true; btn.textContent="Sending…";
+    const sent={centre,at:nowISO(),by:(window.dwMe&&window.dwMe.email)||""};
+    try{
+      await db.doc("patients/"+p.id).update({...o,center:centre,sentToCentre:sent,centreReply:null,updatedAt:nowISO()});
+      await centrePortalCall({action:"send",patientId:p.id});
+      toast("Sent to "+centre+". They got an email."); setTimeout(()=>openPatient(p.id),400);
+    }catch(e){
+      await db.doc("patients/"+p.id).update({sentToCentre:null}).catch(()=>{});
+      msg.textContent=String(e.message||e); btn.disabled=false; btn.textContent="Send patient for confirmation";
+    }
+  };
 }
 function centreReplyHtml(r){ if(!r||!r.action) return ""; const L={accept:["Accepted","ok"],refuse:["Refused","warn"],propose:["Other times proposed","warn"]}[r.action]||[r.action,""];
   return `<div class="banner" style="margin:0"><b>Centre answer: <span class="chip ${L[1]}">${L[0]}</span></b> <span class="sub">${fmtDate(r.at)}${r.by?" · "+h(r.by):""}</span>${r.note?`<div style="margin-top:4px">“${h(r.note)}”</div>`:""}${(r.times||[]).length?`<div class="sub" style="margin-top:4px">Proposed: ${(r.times||[]).map(t=>fmtDate(t.date)+" "+h(t.time||"")).join(" · ")}</div>`:""}</div>`; }
