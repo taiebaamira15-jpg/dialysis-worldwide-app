@@ -19,21 +19,23 @@ async function isTeam(req: Request) {
   return m?.status === "active";
 }
 
-// pick a current Flash model (Google renames them often); GEMINI_MODEL overrides
-let picked = "";
-async function model(key: string) {
-  if (Deno.env.get("GEMINI_MODEL")) return Deno.env.get("GEMINI_MODEL")!;
-  if (picked) return picked;
-  const r = await fetch(`${API}/models?pageSize=200&key=${key}`);
-  if (!r.ok) throw new Error(r.status === 400 || r.status === 403 ? "The Gemini key isn't valid. Check GEMINI_API_KEY in Supabase." : "Gemini is not reachable (" + r.status + ").");
-  const names: string[] = ((await r.json()).models || [])
-    .filter((m: any) => (m.supportedGenerationMethods || []).includes("generateContent"))
-    .map((m: any) => String(m.name).replace(/^models\//, ""))
-    .filter((n: string) => /flash/.test(n) && !/image|tts|audio|live|thinking|exp|preview|embed/.test(n));
-  const score = (n: string) => (n === "gemini-flash-latest" ? 1000 : 0) + (/lite/.test(n) ? -50 : 0) + parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [, "0"])[1]) * 10 - (/-\d{3}$/.test(n) ? 1 : 0);
-  names.sort((a, b) => score(b) - score(a));
-  if (!names.length) throw new Error("No Gemini Flash model is available for this key.");
-  return (picked = names[0]);
+// candidate Flash models, best first (Google renames them often); GEMINI_MODEL goes first if set
+let cached: string[] = [];
+async function models(key: string) {
+  const forced = Deno.env.get("GEMINI_MODEL");
+  if (!cached.length) {
+    const r = await fetch(`${API}/models?pageSize=200&key=${key}`);
+    if (!r.ok) throw new Error(r.status === 400 || r.status === 403 ? "The Gemini key isn't valid. Check GEMINI_API_KEY in Supabase." : "Gemini is not reachable (" + r.status + ").");
+    const names: string[] = ((await r.json()).models || [])
+      .filter((m: any) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m: any) => String(m.name).replace(/^models\//, ""))
+      .filter((n: string) => /flash/.test(n) && !/image|tts|audio|live|thinking|exp|preview|embed/.test(n));
+    const score = (n: string) => (/latest/.test(n) ? 5 : 0) + (/lite/.test(n) ? -3 : 0) + parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [, "0"])[1]) * 10 - (/-\d{3}$/.test(n) ? 1 : 0);
+    cached = names.sort((a, b) => score(b) - score(a));
+  }
+  const list = forced ? [forced, ...cached.filter((n) => n !== forced)] : cached;
+  if (!list.length) throw new Error("No Gemini Flash model is available for this key.");
+  return list.slice(0, 5);
 }
 
 const FIELDS = {
@@ -75,19 +77,30 @@ EMAIL:
 ${text}`;
     const props: Record<string, unknown> = {};
     for (const k of Object.keys(FIELDS)) props[k] = k === "perWeek" ? { type: "integer", nullable: true } : { type: "string" };
-    const m = await model(key);
-    const r = await fetch(`${API}/models/${m}:generateContent?key=${key}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: { type: "object", properties: props } },
-      }),
+    const body = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0, responseMimeType: "application/json", responseSchema: { type: "object", properties: props } },
     });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      if (r.status === 404) picked = "";
-      throw new Error(r.status === 429 ? "Too many emails read in a short time. Wait a minute and try again." : "Gemini error: " + (out?.error?.message || r.status));
+    // try the best Flash model, then a Flash-Lite one, then the next Flash; each try is capped at 20 s
+    let out: any = null, m = "", last = "";
+    const tried: string[] = [];
+    const all = await models(key), flash = all.filter((n) => !/lite/.test(n)), lite = all.filter((n) => /lite/.test(n));
+    const order = [...new Set([flash[0], lite[0], flash[1], lite[1]].filter(Boolean))].slice(0, 3);
+    const t0 = Date.now();
+    for (const name of order) {
+      if (Date.now() - t0 > 60000) break;
+      let r: Response;
+      try { r = await fetch(`${API}/models/${name}:generateContent?key=${key}`, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(20000) }); }
+      catch { tried.push(name + ":timeout"); continue; }
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { out = j; m = name; break; }
+      last = j?.error?.message || String(r.status);
+      tried.push(name + ":" + r.status);
+      if (r.status === 404) { cached = []; continue; }
+      const busy = r.status === 429 || r.status >= 500 || /demand|overload|unavailable|exhausted|quota/i.test(last);
+      if (!busy) throw new Error("Gemini error: " + last);
     }
+    if (!out) throw new Error("Gemini is busy right now. Try again in a minute. [" + tried.join(", ") + "]");
     const raw = out?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "{}";
     let d: Record<string, any> = {};
     try { d = JSON.parse(raw.replace(/^```(json)?|```$/g, "")); } catch { throw new Error("Couldn't read the answer. Try again."); }
