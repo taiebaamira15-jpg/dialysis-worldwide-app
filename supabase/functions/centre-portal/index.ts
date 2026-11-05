@@ -1,4 +1,5 @@
-// Dialysis Worldwide – centre-portal: invite a partner dialysis centre, remove its access, mark it joined.
+// Dialysis Worldwide – centre-portal: invite a partner dialysis centre, remove its access, mark it joined,
+// and (on every 5-minute cron tick) email centres about new patients and date/time changes.
 // Emails are sent from contact@dialysetunisie.com (same Hostinger SMTP secrets as the "team" function).
 import nodemailer from "npm:nodemailer@6";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -43,11 +44,87 @@ function inviteEmail(centre: string, name: string, link: string) {
   return { subject: `Votre espace partenaire Dialyse Tunisie – ${centre}`, html, text };
 }
 
+// ---- notifications to partner centres (queued by the centre_notify trigger) ----
+function isServer(req: Request) {
+  const jwt = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!jwt) return false;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SECRET_KEY");
+  if (key && jwt === key) return true;
+  try { return JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).role === "service_role"; } catch { return false; }
+}
+const VISIBLE = ["docs", "quote", "confirmed", "treatment"];
+const frDate = (d?: string) => { if (!d) return "—"; const t = new Date(d + "T12:00:00Z"); return isNaN(+t) ? d : t.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }); };
+const shortName = (n?: string) => { const w = String(n || "Patient").trim().split(/\s+/); return w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : w[0]; };
+
+function notifyEmail(centre: string, contact: string, items: { kind: string; p: any; sessions: any[] }[]) {
+  const news = items.filter((i) => i.kind === "new").length, changes = items.length - news;
+  const subject = news && !changes ? (news > 1 ? `${news} nouveaux patients` : `Nouveau patient : ${shortName(items[0].p.name)}`) + ` – ${centre}`
+    : !news ? (changes > 1 ? `Dates modifiées pour ${changes} patients` : `Dates modifiées : ${shortName(items[0].p.name)}`) + ` – ${centre}`
+    : `Nouveaux patients et dates modifiées – ${centre}`;
+  const blocks = items.map(({ kind, p, sessions }) => {
+    const label = kind === "new" ? "Nouveau patient" : "Dates / horaires modifiés";
+    const rows: [string, string][] = [
+      ["Arrivée", frDate(p.arrival)], ["Départ", frDate(p.departure)],
+      ["Traitement", `${p.mode || "HD"} · ${p.hours || "4 h"}`], ["Séances / semaine", String(p.perWeek || "—")],
+    ];
+    if (p.time) rows.push(["Horaire souhaité", String(p.time)]);
+    const ses = sessions.filter((s) => s.status !== "cancelled").map((s) => `${frDate(s.date)}${s.time ? " à " + s.time : ""}`);
+    return { label, name: shortName(p.name), rows, ses };
+  });
+  const hi = `Bonjour${contact ? " " + contact : ""},`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#14262B;line-height:1.55">
+   <p style="font-size:20px;font-weight:700"><span style="color:#D0101C">Dialyse</span> Tunisie · ${esc(centre)}</p><p>${esc(hi)}</p>
+   ${blocks.map((b) => `<div style="border:1px solid #DCE5E8;border-radius:10px;padding:14px 16px;margin:14px 0">
+     <p style="margin:0 0 6px;font-size:12px;font-weight:700;text-transform:uppercase;color:${b.label.startsWith("Nouveau") ? "#D0101C" : "#B26A00"}">${b.label}</p>
+     <p style="margin:0 0 8px;font-size:17px;font-weight:700">${esc(b.name)}</p>
+     <table style="border-collapse:collapse;font-size:14px">${b.rows.map(([k, v]) => `<tr><td style="color:#56696F;padding:2px 14px 2px 0">${k}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+     ${b.ses.length ? `<p style="margin:10px 0 2px;color:#56696F;font-size:14px">Séances prévues :</p><ul style="margin:0;padding-left:18px;font-size:14px">${b.ses.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+   </div>`).join("")}
+   <p>Merci de confirmer ou de proposer d'autres horaires dans votre espace partenaire.</p>
+   <p style="margin:22px 0"><a href="${APP}" style="background:#3B4248;color:#fff;text-decoration:none;padding:13px 22px;border-radius:8px;font-weight:700;display:inline-block">Ouvrir mon espace</a></p>
+   <p style="color:#8EA2A8;font-size:13px">Les coordonnées complètes du patient sont dans votre espace partenaire.</p></div>`;
+  const text = `${hi}\n\n` + blocks.map((b) => `${b.label.toUpperCase()} : ${b.name}\n` + b.rows.map(([k, v]) => `${k} : ${v}`).join("\n") + (b.ses.length ? `\nSéances prévues :\n- ${b.ses.join("\n- ")}` : "")).join("\n\n")
+    + `\n\nMerci de confirmer ou de proposer d'autres horaires dans votre espace partenaire : ${APP}`;
+  return { subject, html, text };
+}
+
+async function flush() {
+  const { data: q, error } = await sb.from("centre_notify_queue").select("id,centre,patient_id,kind,created_at").is("sent_at", null).order("id").limit(500);
+  if (error) throw error;
+  if (!q?.length) return { sent: 0 };
+  // wait until a patient has had no new change for 2 minutes, so a burst of edits makes one email
+  const quiet = Date.now() - 2 * 60 * 1000, groups = new Map<string, any[]>();
+  for (const r of q) { const k = r.centre + "\u0000" + r.patient_id; (groups.get(k) || groups.set(k, []).get(k)!).push(r); }
+  const ready = [...groups.values()].filter((g) => Math.max(...g.map((r) => +new Date(r.created_at))) < quiet);
+  if (!ready.length) return { sent: 0, waiting: groups.size };
+  const byCentre = new Map<string, { ids: number[]; pid: string; kind: string }[]>();
+  for (const g of ready) (byCentre.get(g[0].centre) || byCentre.set(g[0].centre, []).get(g[0].centre)!)
+    .push({ ids: g.map((r) => r.id), pid: g[0].patient_id, kind: g.some((r) => r.kind === "new") ? "new" : "change" });
+  let sent = 0;
+  for (const [centre, list] of byCentre) {
+    const ids = list.flatMap((l) => l.ids);
+    const { data: pats } = await sb.from("records").select("id,data").eq("collection", "patients").in("id", list.map((l) => l.pid));
+    const { data: ses } = await sb.from("records").select("data").eq("collection", "sessions").in("data->>patientId", list.map((l) => l.pid));
+    const items = list.map((l) => ({ pid: l.pid, kind: l.kind, p: pats?.find((x) => x.id === l.pid)?.data, sessions: [] as any[] }))
+      .filter((i) => i.p && i.p.center === centre && VISIBLE.includes(i.p.stage));
+    for (const i of items) i.sessions = (ses || []).map((s) => s.data).filter((s) => s.patientId === i.pid && s.center === centre)
+      .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+    if (items.length) {
+      const { data: users } = await sb.from("centre_users").select("email,name").eq("centre", centre).neq("status", "removed");
+      for (const u of users || []) { const m = notifyEmail(centre, u.name || "", items); await mail(u.email, m.subject, m.html, m.text); sent++; }
+    }
+    await sb.from("centre_notify_queue").update({ sent_at: new Date().toISOString() }).in("id", ids);
+  }
+  return { sent };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     const b = await req.json().catch(() => ({}));
     const action = String(b.action || "");
+    // cron tick (mail_tick insert) or manual flush with the server key
+    if ((b.table === "mail_tick" || action === "flush") && isServer(req)) return json({ ok: true, ...(await flush()) });
     const me = await caller(req);
     if (!me) return json({ error: "Sign in again." }, 401);
 
