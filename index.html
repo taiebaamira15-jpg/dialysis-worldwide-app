@@ -648,6 +648,41 @@ ${String(e.body).slice(0,8000)}`;
   }catch(err){ toast(err.code==="not_granted"?"Claude access was declined for this page":"Couldn't write a draft. Try again in a moment."); }
   btn.disabled=false; btn.textContent="Write a new draft";
 }
+/* New patient: paste the patient's email, the server reads it (Gemini) and fills the file */
+function openNewPatient(){
+  drawer(`<header><h3>New patient</h3><button class="x" data-close aria-label="Close">×</button></header>
+  <div class="body"><p class="sub" style="margin:0">Paste the patient's email or message. The app reads it and fills the patient file for you: name, contact, nationality, dates, sessions, city, hotel, notes.</p>
+  <div class="form">
+    <label class="f">Site<select id="npSite">${Object.values(SITES).map(s=>`<option value="${s.key}" ${(S.site==="ALL"?"TN":S.site)===s.key?'selected':''}>${h(siteName(s.key))}</option>`).join("")}</select></label>
+    <label class="f full">Patient's email<textarea id="npText" rows="12" placeholder="Paste the full email here (you can include the sender line and the whole thread)"></textarea></label>
+  </div>
+  <div class="sub" id="npMsg" role="status"></div>
+  <div class="actions"><button class="btn primary" id="npRead">Read email and create patient</button><button class="btn" id="npEmpty">Create empty patient</button></div></div>`);
+  const site=()=>$("npSite").value;
+  $("npEmpty").onclick=async()=>{ const ref=await db.collection("patients").add({name:"New patient",site:site(),stage:"new",perWeek:3,docs:{},createdAt:nowISO()}); openPatient(ref.id); };
+  $("npRead").onclick=async()=>{
+    const text=$("npText").value.trim(), msg=$("npMsg"), btn=$("npRead");
+    if(text.length<20){ msg.textContent="Paste the patient's email first."; $("npText").focus(); return; }
+    btn.disabled=true; btn.textContent="Reading the email…"; msg.textContent="";
+    let d=null;
+    try{
+      const {data,error}=await window.dwSupabase.functions.invoke("read-email",{body:{text}});
+      let m=data&&data.error; if(error){ try{ m=(await error.context.json()).error||error.message; }catch{ m=error.message; } }
+      if(m) throw new Error(m); d=(data&&data.patient)||{};
+    }catch(err){ msg.textContent=String(err.message||err)+" You can still create an empty patient."; btn.disabled=false; btn.textContent="Read email and create patient"; return; }
+    if(!d.email){ const m=text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if(m) d.email=m[0]; }
+    const same=d.email&&S.patients.find(p=>(p.email||"").toLowerCase()===String(d.email).toLowerCase());
+    if(same&&!confirm(`${same.name} already has a file with ${d.email}. Create a new file anyway?\n\nCancel opens the existing file.`)){ openPatient(same.id); return; }
+    const p={name:d.name||"New patient",email:d.email||"",phone:d.phone||"",nationality:d.nationality||"",site:site(),stage:"new",
+      arrival:d.arrival||"",departure:d.departure||"",perWeek:Number(d.perWeek)||3,city:d.city||"",notes:d.notes||"",docs:{},createdAt:nowISO(),sourceEmail:text.slice(0,20000)};
+    for(const k of ["lang","hours","mode","time","hotel","transfer"]) if(d[k]) p[k]=d[k];
+    const ref=await db.collection("patients").add(p);
+    const got=["name","email","phone","nationality","arrival","departure","city","hotel"].filter(k=>d[k]).length;
+    toast(got?"Patient created from the email. Check the details.":"Patient created, but the email had few details. Fill in the rest.");
+    openPatient(ref.id);
+  };
+  setTimeout(()=>$("npText")&&$("npText").focus(),50);
+}
 async function createPatientFromEmail(e){
   const b=$("eMk"); if(b){b.disabled=true; b.textContent="Reading application…";}
   let d={name:e.fromName||"", email:e.from};
@@ -674,7 +709,7 @@ function viewPatients(v){
    <td><span class="docs">${DOCS.map(([k])=>`<i class="${(p.docs||{})[k]?'on':''}"></i>`).join("")}</span> <span class="sub">${docsDone(p)}/${DOCS.length}</span></td></tr>`).join("")}
   </tbody></table></div>${list.length?"":`<div class="empty">No patients here yet. Create one from an application email, or with “New patient”.</div>`}</section>`;
   $("q").oninput=e=>{S.q=e.target.value; const pos=e.target.selectionStart; viewPatients(v); const q=$("q"); q.focus(); q.setSelectionRange(pos,pos);};
-  $("winBack").onclick=()=>go("campaigns"); $("newP").onclick=async()=>{ const ref=await db.collection("patients").add({name:"New patient",site:S.site==="ALL"?"TN":S.site,stage:"new",perWeek:3,docs:{},createdAt:nowISO()}); openPatient(ref.id); };
+  $("winBack").onclick=()=>go("campaigns"); $("newP").onclick=openNewPatient;
 }
 document.addEventListener("click",e=>{
   const st=e.target.closest("[data-stage]"); if(st){ S.stage=S.stage===st.dataset.stage?"all":st.dataset.stage; render(); return; }
