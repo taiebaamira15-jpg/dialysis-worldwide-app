@@ -22,11 +22,11 @@ async function caller(req: Request) {
   return { id: u.id, email: u.email || "", role: m?.status === "active" ? m.role : "none" };
 }
 
-async function mail(to: string, subject: string, html: string, text: string) {
+async function mail(to: string, subject: string, html: string, text: string, attachments: any[] = []) {
   const user = Deno.env.get("HOSTINGER_IMAP_USER") || "contact@dialysetunisie.com", pass = Deno.env.get("HOSTINGER_IMAP_PASSWORD");
   if (!pass) throw new Error("The mailbox password is not set in Supabase.");
   const t = nodemailer.createTransport({ host: Deno.env.get("HOSTINGER_SMTP_HOST") || "smtp.hostinger.com", port: 465, secure: true, auth: { user, pass } });
-  await t.sendMail({ from: { name: "Dialyse Tunisie", address: user }, to, subject, html, text });
+  await t.sendMail({ from: { name: "Dialyse Tunisie", address: user }, to, subject, html, text, attachments });
 }
 
 function inviteEmail(centre: string, name: string, link: string) {
@@ -126,7 +126,26 @@ async function sendPatient(pid: string) {
   if (!users?.length) throw new Error(`${centre} has no partner access yet. Invite the centre from the Centres page first.`);
   const { data: ses } = await sb.from("records").select("data").eq("collection", "sessions").eq("data->>patientId", pid);
   const sessions = (ses || []).map((x) => x.data).filter((x) => x.center === centre).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-  for (const u of users) { const m = notifyEmail(centre, u.name || "", [{ kind: "new", p, sessions }]); await mail(u.email, m.subject, m.html, m.text); }
+  // files attached by the team: in the email (up to 15 MB together) and always in the centre's space
+  const files: any[] = Array.isArray(p.sentToCentre?.files) ? p.sentToCentre.files : [];
+  const attachments: any[] = []; let total = 0;
+  for (const f of files) {
+    if (total + Number(f.size || 0) > 15 * 1024 * 1024) break;
+    const { data: blob } = await sb.storage.from("centre-files").download(f.path);
+    if (!blob) continue;
+    const content = new Uint8Array(await blob.arrayBuffer()); total += content.length;
+    attachments.push({ filename: f.name, content, contentType: f.type || blob.type || "application/octet-stream" });
+  }
+  const list = files.map((f) => f.name), missing = files.length - attachments.length;
+  for (const u of users) {
+    const m = notifyEmail(centre, u.name || "", [{ kind: "new", p, sessions }]);
+    if (list.length) {
+      const note = missing ? ` (${missing} fichier${missing > 1 ? "s" : ""} trop volumineux pour l'e-mail : à télécharger dans votre espace)` : "";
+      m.html = m.html.replace("<p>Merci de confirmer", `<p><b>Documents joints :</b> ${list.map(esc).join(" · ")}${esc(note)}</p><p>Merci de confirmer`);
+      m.text = m.text.replace("\n\nMerci de confirmer", `\n\nDocuments joints : ${list.join(", ")}${note}\n\nMerci de confirmer`);
+    }
+    await mail(u.email, m.subject, m.html, m.text, attachments);
+  }
   return users.length;
 }
 
