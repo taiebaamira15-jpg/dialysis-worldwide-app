@@ -100,16 +100,15 @@
   }
 
   function earningsView() {
-    const e = data.earnings;
-    const earned = e.reduce((a, x) => a + Number(x.earned || 0), 0), com = e.reduce((a, x) => a + Number(x.commission || 0), 0);
-    const owed = e.filter(x => x.status !== "paid").reduce((a, x) => a + Number(x.commission || 0), 0);
-    return `<div class="kp"><div><b>${tnd(earned)}</b><span>Vos gains grâce à Dialyse Tunisie · ${e.length} patient${e.length > 1 ? "s" : ""}</span></div>
-      <div><b>${e.reduce((a, x) => a + Number(x.sessions || 0), 0)}</b><span>Séances réalisées</span></div>
-      <div><b>${tnd(com)}</b><span>Commission Dialyse Tunisie</span></div><div><b style="color:${owed > 0 ? "var(--warn)" : "var(--ok)"}">${tnd(owed)}</b><span>Commission restant à régler</span></div></div>
-      <section class="card"><div class="scroll"><table><thead><tr><th>Date</th><th>Patient</th><th class="n">Séances</th><th class="n">Tarif</th><th class="n">Vos gains</th><th class="n">Commission</th><th>Règlement</th></tr></thead><tbody>
-      ${e.map(x => `<tr><td>${fdate((x.date || "").slice(0, 10))}</td><td>${esc(x.name)}</td><td class="n">${esc(x.sessions)}</td><td class="n">${tnd(x.fee)}</td><td class="n"><b>${tnd(x.earned)}</b></td><td class="n">${tnd(x.commission)}</td><td>${x.status === "paid" ? '<span class="chip ok">Réglée</span>' : '<span class="chip warn">À régler</span>'}</td></tr>`).join("")}
+    const e = data.earnings, sum = (k, l = e) => l.reduce((a, x) => a + Number(x[k] || 0), 0);
+    const owed = sum("commission", e.filter(x => x.status !== "paid"));
+    return `<div class="kp"><div><b>${tnd(sum("earned"))}</b><span>Vos gains grâce à Dialyse Tunisie · ${e.length} patient${e.length > 1 ? "s" : ""}</span></div>
+      <div><b>${tnd(sum("paid"))}</b><span>Payé par les patients · ${sum("sessions")} séances</span></div>
+      <div><b>${tnd(sum("commission"))}</b><span>Commission Dialyse Tunisie</span></div><div><b style="color:${owed > 0 ? "var(--warn)" : "var(--ok)"}">${tnd(owed)}</b><span>Commission restant à régler</span></div></div>
+      <section class="card"><div class="scroll"><table><thead><tr><th>Date</th><th>Patient</th><th class="n">Séances</th><th class="n">Payé par le patient</th><th class="n">Commission</th><th class="n">Vos gains</th><th>Règlement</th></tr></thead><tbody>
+      ${e.map(x => `<tr><td>${fdate((x.date || "").slice(0, 10))}</td><td>${esc(x.name)}</td><td class="n">${esc(x.sessions)}</td><td class="n">${tnd(x.paid)}</td><td class="n">${tnd(x.commission)}<div style="font-size:11px;color:var(--muted)">${esc(x.rate)} % de ${tnd(Number(x.paid || 0) - Number(x.fee || 0) * Number(x.sessions || 0))}</div></td><td class="n"><b>${tnd(x.earned)}</b></td><td>${x.status === "paid" ? '<span class="chip ok">Réglée</span>' : '<span class="chip warn">À régler</span>'}</td></tr>`).join("")}
       </tbody></table></div>${e.length ? "" : `<div class="empty">Les gains apparaîtront ici après le premier séjour d'un patient.</div>`}</section>
-      <p class="note">Vos gains = nombre de séances × tarif convenu. Une question sur un montant ? Écrivez à contact@dialysetunisie.com.</p>`;
+      <p class="note">Calcul : commission = (montant payé par le patient − ${e[0] ? tnd(e[0].fee) : "tarif"} × séances) × taux de commission. Vos gains = montant payé − commission. Une question sur un montant ? Écrivez à contact@dialysetunisie.com.</p>`;
   }
 
   function render() {

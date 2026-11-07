@@ -1,5 +1,5 @@
 // Dialysis Worldwide – keeps the app shell available offline and shows phone notifications. Data always comes live from Supabase.
-const CACHE="dw-app-v6";
+const CACHE="dw-app-v7";
 const SHELL=["./","index.html","manifest.webmanifest","supabase.js","portal.js","591.supabase.js","jspdf.umd.min.js","icon-192.png","icon-512.png","apple-touch-icon.png","favicon.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()));});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
