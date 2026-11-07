@@ -52,6 +52,14 @@
   function sessionsOf(pid) { return data.sessions.filter(s => s.patientId === pid); }
   function replyChip(r) { if (!r || !REPLY[r.action]) return `<span class="chip warn">En attente de votre réponse</span>`; const [l, k] = REPLY[r.action]; return `<span class="chip ${k}">${l} · ${fdate((r.at || "").slice(0, 10))}</span>`; }
 
+  async function openFile(pid, i) {
+    const p = data.patients.find(x => x.id === pid), f = p && (p.files || [])[i]; if (!f) return;
+    const w = window.open("", "_blank");
+    const { data: u, error } = await sb.storage.from("centre-files").createSignedUrl(f.path, 300);
+    if (error) { if (w) w.close(); flash("Impossible d'ouvrir le document : " + error.message); return; }
+    if (w) w.location = u.signedUrl; else location.href = u.signedUrl;
+  }
+
   function patientCard(p) {
     const ss = sessionsOf(p.id), r = p.centreReply;
     const docs = (p.docs || []).map(k => DOCS[k] || k);
@@ -63,6 +71,7 @@
         <div><i>Traitement</i>${esc(p.mode || "HD")} · ${esc(p.hours || "4 h")}</div><div><i>Séances / semaine</i>${esc(p.perWeek || "—")}</div>
         <div><i>Hôtel</i>${esc(p.hotel || "—")}</div><div><i>Transfert</i>${esc(TRANSFER[p.transfer] || p.transfer || "—")}</div>
         <div style="grid-column:1/-1"><i>Dossier médical reçu</i>${docs.length ? docs.map(esc).join(" · ") : "Pas encore reçu"}</div>
+        ${(p.files || []).length ? `<div style="grid-column:1/-1"><i>Documents envoyés par Dialyse Tunisie</i>${p.files.map((f, i) => `<a href="#" data-file="${i}" style="margin-right:12px">📄 ${esc(f.name)}</a>`).join("")}</div>` : ""}
       </div>
       ${ss.length ? `<div class="scroll"><table><thead><tr><th>Jour</th><th>Date</th><th>Heure</th><th>Statut</th></tr></thead><tbody>
         ${ss.map(s => `<tr><td>${fday(s.date)}</td><td>${fdate(s.date)}</td><td>${esc(s.time || "—")}${s.proposed && s.proposed.time ? ` <span class="note">(proposé : ${fdate(s.proposed.date)} ${esc(s.proposed.time)})</span>` : ""}</td><td>${s.status === "confirmed" ? '<span class="chip ok">Confirmée</span>' : s.status === "done" ? '<span class="chip">Faite</span>' : s.status === "cancelled" ? '<span class="chip bad">Annulée</span>' : '<span class="chip">Prévue</span>'}</td></tr>`).join("")}
@@ -147,6 +156,7 @@
       if (!document.getElementById("portal")) return;
       const t = e.target.closest("[data-tab]"); if (t) { tab = t.dataset.tab; open = null; render(); return; }
       const a = e.target.closest("[data-act]"); if (a) { open = { pid: a.closest("[data-pid]").dataset.pid, act: a.dataset.act }; render(); const n = document.getElementById("pt_note"); if (n) n.focus(); return; }
+      const fl = e.target.closest("[data-file]"); if (fl) { e.preventDefault(); openFile(fl.closest("[data-pid]").dataset.pid, Number(fl.dataset.file)); return; }
       if (e.target.closest("[data-cancel]")) { open = null; render(); return; }
       const s = e.target.closest("[data-send]"); if (s) { send(s.dataset.send, s.closest("[data-pid]").dataset.pid); return; }
       if (e.target.id === "pt_ref") { load().then(render).catch(err => flash(String(err.message || err))); return; }

@@ -1548,7 +1548,10 @@ async function sendBox(p,collect){
   if(st&&st.centre){
     const r=p.centreReply, wait=!r||!r.action;
     box.innerHTML=`<div class="banner" style="margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn" disabled>✓ Sent to ${h(st.centre)}</button>
-      <span class="sub">${fmtDate(st.at)} · ${wait?"waiting for the centre's confirmation":"the centre answered (below)"}</span></div>`;
+      <span class="sub">${fmtDate(st.at)} · ${wait?"waiting for the centre's confirmation":"the centre answered (below)"}</span>
+      ${(st.files||[]).length?`<div style="flex-basis:100%" class="sub">Files sent: ${st.files.map((f,i)=>`<a href="#" data-sbfile="${i}">${h(f.name)}</a>`).join(" · ")}</div>`:""}</div>`;
+    box.querySelectorAll("[data-sbfile]").forEach(a=>a.onclick=async ev=>{ ev.preventDefault(); const f=st.files[Number(a.dataset.sbfile)];
+      const {data,error}=await window.dwSupabase.storage.from("centre-files").createSignedUrl(f.path,300); if(error){ toast("Couldn't open the file: "+error.message); return; } window.open(data.signedUrl,"_blank"); });
     const fc=$("f_center"); if(fc){ fc.disabled=true; fc.title="Already sent to "+st.centre; }
     return;
   }
@@ -1557,16 +1560,28 @@ async function sendBox(p,collect){
   const cur=($("f_center")&&$("f_center").value)||p.center||"";
   box.innerHTML=`<div class="banner" style="margin:0"><b>Send to a centre for confirmation</b>
     <div class="actions" style="margin-top:8px;align-items:center">
-      ${list.length?`<select id="sbCentre">${list.map(c=>`<option ${c===cur?"selected":""}>${h(c)}</option>`).join("")}</select><button class="btn primary" id="sbSend">Send patient for confirmation</button>`
+      ${list.length?`<select id="sbCentre">${list.map(c=>`<option ${c===cur?"selected":""}>${h(c)}</option>`).join("")}</select><button class="btn primary" id="sbSend">Send patient for confirmation</button>
+      <label class="f full" style="flex-basis:100%;margin-top:6px">Attach files (optional) – prescription, serology, medical report…<input type="file" id="sbFiles" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.webp,.doc,.docx"></label>`
         :`<span class="sub">No centre has partner access yet. Invite a centre from its page in Centres, then come back here.</span>`}
     </div><div class="sub" id="sbMsg" style="margin-top:6px">The centre sees this patient in its space and gets an email. They can accept, refuse or propose other times.</div></div>`;
   if(!list.length) return;
   $("sbSend").onclick=async()=>{
     const btn=$("sbSend"), msg=$("sbMsg"), centre=$("sbCentre").value;
     const o=collect(); if(!o.arrival||!o.departure){ msg.textContent="Add the arrival and departure dates first."; return; }
-    btn.disabled=true; btn.textContent="Sending…";
-    const sent={centre,at:nowISO(),by:(window.dwMe&&window.dwMe.email)||""};
+    const picked=[...(($("sbFiles")||{}).files||[])];
+    if(picked.some(f=>f.size>10*1024*1024)){ msg.textContent="Each file must be under 10 MB."; return; }
+    if(picked.reduce((n,f)=>n+f.size,0)>25*1024*1024){ msg.textContent="Files are too large together (max 25 MB)."; return; }
+    btn.disabled=true; btn.textContent=picked.length?"Uploading files…":"Sending…";
+    const sent={centre,at:nowISO(),by:(window.dwMe&&window.dwMe.email)||"",files:[]};
     try{
+      for(const f of picked){
+        const safe=f.name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^\w.\-]+/g,"_").slice(-80);
+        const path=`${p.id}/${Date.now()}-${safe}`;
+        const {error}=await window.dwSupabase.storage.from("centre-files").upload(path,f,{contentType:f.type||"application/octet-stream"});
+        if(error) throw new Error("Upload failed for "+f.name+": "+error.message);
+        sent.files.push({name:f.name,path,size:f.size,type:f.type||""});
+      }
+      btn.textContent="Sending…";
       await db.doc("patients/"+p.id).update({...o,center:centre,sentToCentre:sent,centreReply:null,updatedAt:nowISO()});
       await centrePortalCall({action:"send",patientId:p.id});
       toast("Sent to "+centre+". They got an email."); setTimeout(()=>openPatient(p.id),400);
