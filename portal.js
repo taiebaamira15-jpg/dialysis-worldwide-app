@@ -147,11 +147,11 @@
     sb = client; me = info || {};
     document.head.insertAdjacentHTML("beforeend", `<style>${css}</style>`);
     document.title = "Espace partenaire · " + (me.centre || "Dialyse Tunisie");
-    [...document.body.children].forEach(el => { if (el.id !== "portal" && el.tagName !== "SCRIPT") el.style.display = "none"; });
+    [...document.body.children].forEach(el => { if (el.id !== "portal" && el.id !== "splash" && el.tagName !== "SCRIPT") el.style.display = "none"; });
     root().innerHTML = `<main><p class="note" style="padding:40px;text-align:center">Chargement…</p></main>`;
     sb.functions.invoke("centre-portal", { body: { action: "joined" } }).catch(() => {});
-    try { await load(); } catch (e) { root().innerHTML = `<main><div class="card">Impossible de charger votre espace : ${esc(e.message || e)}</div></main>`; return; }
-    render();
+    try { await load(); } catch (e) { root().innerHTML = `<main><div class="card">Impossible de charger votre espace : ${esc(e.message || e)}</div></main>`; window.dwSplashDone && window.dwSplashDone(); return; }
+    render(); requestAnimationFrame(() => window.dwSplashDone && window.dwSplashDone());
     document.addEventListener("click", e => {
       if (!document.getElementById("portal")) return;
       const t = e.target.closest("[data-tab]"); if (t) { tab = t.dataset.tab; open = null; render(); return; }

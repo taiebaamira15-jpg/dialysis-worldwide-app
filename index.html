@@ -76,7 +76,7 @@
   #acct .card{background:var(--surface);border-radius:14px;padding:22px;width:min(440px,100%);display:flex;flex-direction:column;gap:12px}`;
   document.head.insertAdjacentHTML("beforeend",`<style>${css}</style>`);
   const logo=`<svg width="34" height="38" viewBox="0 0 30 34" aria-hidden="true"><path d="M15 2C15 2 4 15 4 22a11 11 0 0 0 22 0C26 15 15 2 15 2z" fill="#D0101C"/><path d="M10 22a5 5 0 0 0 5 5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>`;
-  function gate(html){ let g=document.getElementById("gate"); if(!g){ g=document.createElement("div"); g.id="gate"; document.body.appendChild(g);} g.innerHTML=`<div class="card">${logo}<h1><span>Dialysis</span> Worldwide</h1>${html}</div>`; return g; }
+  function gate(html){ window.dwSplashDone&&window.dwSplashDone(); let g=document.getElementById("gate"); if(!g){ g=document.createElement("div"); g.id="gate"; document.body.appendChild(g);} g.innerHTML=`<div class="card">${logo}<h1><span>Dialysis</span> Worldwide</h1>${html}</div>`; return g; }
   function setupScreen(){
     const g=gate(`<p>First start on this device: connect the app to your Supabase database. You find both values in Supabase → Project Settings → API.</p>
       <label>Project URL<input id="g_url" placeholder="https://xxxx.supabase.co" autocomplete="off"></label>
@@ -115,7 +115,7 @@
   async function loadAll(){ rows.clear(); let from=0; for(;;){ const {data,error}=await sb.from("records").select("collection,id,data").range(from,from+999); if(error) throw error; data.forEach(r=>rows.set(r.collection+"/"+r.id,r.data)); if(data.length<1000) break; from+=1000; } }
   async function start(){
     // partner dialysis centres get their own space (portal.js); they never load the main data
-    try{ const {data:pm}=await sb.rpc("portal_me"); if(pm&&window.dwPortal){ document.getElementById("gate")?.remove(); window.dwPortal(sb,pm); return; } }catch(e){ console.warn("portal check",e); }
+    try{ const {data:pm}=await sb.rpc("portal_me"); if(pm&&window.dwPortal){ window.dwSplashBrand&&window.dwSplashBrand("Dialyse","Tunisie"); document.getElementById("gate")?.remove(); window.dwPortal(sb,pm); return; } }catch(e){ console.warn("portal check",e); }
     try{ const {data:me}=await sb.functions.invoke("team",{body:{action:"me"}}); window.dwMe=me||null; if(me&&!me.owner&&me.role==="none"){ gate(`<p>Your access to this workspace isn't active. Ask the admin to invite you again.</p><button class="btn primary" id="g_out">Sign out</button>`).querySelector("#g_out").onclick=async()=>{ await sb.auth.signOut(); location.reload(); }; return; } if(me&&!me.owner) sb.functions.invoke("team",{body:{action:"seen"}}).catch(()=>{}); }catch{}
     try{ await loadAll(); }catch(e){ loginScreen("Couldn't read the database: "+(e.message||e)+". Did you run the setup SQL in Supabase?"); return; }
     document.getElementById("gate")?.remove();
@@ -391,6 +391,70 @@ table.seo td{padding:8px 10px;border-top:1px solid var(--line)} table.seo th{pad
 
 </head>
 <body>
+<div id="splash" role="status" aria-live="polite" aria-label="Loading">
+  <style>
+    #splash{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:var(--bg,#EEF2F3);
+      transition:opacity .55s cubic-bezier(.4,0,.2,1),filter .55s,visibility 0s .55s}
+    #splash::before{content:"";position:absolute;inset:0;background:radial-gradient(60% 45% at 50% 46%,color-mix(in srgb,var(--brand,#D0101C) 9%,transparent),transparent 70%);opacity:0;animation:spGlow 1.4s .2s ease-out forwards}
+    #splash .sp-box{position:relative;display:flex;flex-direction:column;align-items:center;gap:22px}
+    #splash .sp-mark{position:relative;width:96px;height:109px}
+    #splash svg{width:96px;height:109px;overflow:visible;animation:spFloat 2.6s 1.5s ease-in-out infinite}
+    #splash .sp-out{fill:none;stroke:var(--brand,#D0101C);stroke-width:.7;stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .8s cubic-bezier(.65,0,.35,1) forwards}
+    #splash .sp-rise{transform:translateY(22px);animation:spRise 1s .45s cubic-bezier(.33,1,.68,1) forwards}
+    #splash .sp-wave{fill:var(--brand,#D0101C);animation:spWave 1.6s linear infinite}
+    #splash .sp-wave.b{opacity:.45;animation-duration:2.3s;animation-direction:reverse}
+    #splash .sp-hi{fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;opacity:0;animation:spHi .4s 1.25s ease-out forwards}
+    #splash .sp-ring{position:absolute;left:50%;bottom:-6px;width:88px;height:20px;margin-left:-44px;border-radius:50%;border:1.5px solid var(--brand,#D0101C);opacity:0;transform:scale(.3);animation:spRing 2.2s 1.3s cubic-bezier(.2,.7,.3,1) infinite}
+    #splash .sp-ring.b{animation-delay:2.4s}
+    #splash .sp-name{font-family:var(--f-display,"Segoe UI",system-ui,sans-serif);font-size:26px;font-weight:800;letter-spacing:-.01em;color:var(--ink,#10242B);display:flex;gap:.28em;white-space:nowrap}
+    #splash .sp-name i{font-style:normal;display:inline-block;opacity:0;transform:translateY(14px);filter:blur(4px);animation:spLetter .55s calc(.85s + var(--i)*28ms) cubic-bezier(.22,1,.36,1) forwards}
+    #splash .sp-name .w1 i{color:var(--brand,#D0101C)}
+    #splash .sp-bar{width:132px;height:3px;border-radius:3px;background:color-mix(in srgb,var(--ink,#10242B) 10%,transparent);overflow:hidden;opacity:0;animation:spFade .4s 1.3s forwards}
+    #splash .sp-bar::after{content:"";display:block;width:40%;height:100%;border-radius:3px;background:var(--brand,#D0101C);animation:spBar 1.15s 1.3s cubic-bezier(.45,0,.55,1) infinite}
+    #splash.out{opacity:0;visibility:hidden;filter:blur(6px)}
+    #splash.out .sp-box{transform:translateY(-14px) scale(1.04);transition:transform .55s cubic-bezier(.4,0,.2,1)}
+    @keyframes spDraw{to{stroke-dashoffset:0}}
+    @keyframes spHi{0%{opacity:1}to{opacity:1;stroke-dashoffset:0}}
+    @keyframes spRise{to{transform:translateY(-1px)}}
+    @keyframes spWave{from{transform:translateX(0)}to{transform:translateX(-15px)}}
+    @keyframes spFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+    @keyframes spRing{0%{opacity:.55;transform:scale(.3)}100%{opacity:0;transform:scale(1.6)}}
+    @keyframes spLetter{to{opacity:1;transform:none;filter:none}}
+    @keyframes spFade{to{opacity:1}}
+    @keyframes spGlow{to{opacity:1}}
+    @keyframes spBar{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
+    @media (prefers-reduced-motion:reduce){#splash *,#splash::before{animation-duration:.01s!important;animation-delay:0s!important;animation-iteration-count:1!important}}
+  </style>
+  <div class="sp-box">
+    <div class="sp-mark">
+      <svg viewBox="0 0 30 34" aria-hidden="true">
+        <defs><clipPath id="spClip"><path d="M15 2C15 2 4 15 4 22a11 11 0 0 0 22 0C26 15 15 2 15 2z"/></clipPath></defs>
+        <g clip-path="url(#spClip)"><g class="sp-rise">
+          <path class="sp-wave b" d="M-15 3Q-11.25 1 -7.5 3T0 3T7.5 3T15 3T22.5 3T30 3T37.5 3T45 3V40H-15Z"/>
+          <path class="sp-wave" d="M-15 4Q-11.25 2.2 -7.5 4T0 4T7.5 4T15 4T22.5 4T30 4T37.5 4T45 4V40H-15Z"/>
+        </g></g>
+        <path class="sp-out" pathLength="1" d="M15 2C15 2 4 15 4 22a11 11 0 0 0 22 0C26 15 15 2 15 2z"/>
+        <path class="sp-hi" pathLength="1" d="M10 22a5 5 0 0 0 5 5"/>
+      </svg>
+      <span class="sp-ring"></span><span class="sp-ring b"></span>
+    </div>
+    <div class="sp-name" id="spName"></div>
+    <div class="sp-bar"></div>
+  </div>
+  <script>
+  (function(){
+    var t0=Date.now(), el=document.getElementById("splash"), done=false;
+    function brand(a,b){ var n=document.getElementById("spName"); if(!n) return; var i=0;
+      n.innerHTML=[a,b].map(function(w,k){ return '<span class="w'+(k+1)+'">'+w.split("").map(function(c){ return '<i style="--i:'+(i++)+'">'+c+'</i>'; }).join("")+'</span>'; }).join(""); }
+    brand("Dialysis","Worldwide");
+    window.dwSplashBrand=function(a,b){ var n=document.getElementById("spName"); if(n&&n.textContent!==a+b) brand(a,b); };
+    window.dwSplashDone=function(){ if(done||!el) return; done=true;
+      var wait=Math.max(0,1600-(Date.now()-t0));
+      setTimeout(function(){ el.classList.add("out"); setTimeout(function(){ el.remove(); },600); },wait); };
+    setTimeout(window.dwSplashDone,15000);
+  })();
+  </script>
+</div>
 <header class="top">
   <div class="wrap bar">
     <div class="brand">
@@ -1920,7 +1984,7 @@ const timeout=setTimeout(()=>{ if(!S.ready){ $("savestate").textContent="Not con
   db = await claude.use("db");
   if(!db){ clearTimeout(timeout); $("savestate").textContent="Not connected"; $("view").innerHTML=`<div class="empty">Sign in to see your records.</div>`; return; }
   const loaded=new Set(), need=["emails","patients","invoices","replies","commissions","sessions","settings"];
-  const done=k=>{ loaded.add(k); if(need.every(x=>loaded.has(x))){ clearTimeout(timeout); S.ready=true; $("savestate").textContent="Saved automatically"; } render(); };
+  const done=k=>{ loaded.add(k); if(need.every(x=>loaded.has(x))){ clearTimeout(timeout); S.ready=true; $("savestate").textContent="Saved automatically"; } render(); if(S.ready) requestAnimationFrame(()=>window.dwSplashDone&&window.dwSplashDone()); };
   const sub=(col,key)=>db.collection(col).onSnapshot(snap=>{ S[key]=snap.docs.map(d=>({id:d.id,...d.data()})); if(S.drawer){ renderChrome(); if(S.ready) {} } else render(); done(key); if(S.drawer) renderBehind(); },err=>{ $("savestate").textContent="Sync problem: "+err.code; });
   sub("campaigns","campaigns"); sub("seo","seo"); sub("emails","emails"); sub("patients","patients"); sub("invoices","invoices"); sub("replies","replies"); sub("commissions","commissions"); sub("sessions","sessions");
   db.doc("settings/main").onSnapshot(s=>{ S.settings=s.exists?(s.data()||{}):{}; done("settings"); },()=>{});
