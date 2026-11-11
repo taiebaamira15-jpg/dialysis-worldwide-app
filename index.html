@@ -844,6 +844,7 @@ function viewPatients(v){
 }
 document.addEventListener("click",e=>{
   const st=e.target.closest("[data-stage]"); if(st){ S.stage=S.stage===st.dataset.stage?"all":st.dataset.stage; render(); return; }
+  const cfb=e.target.closest("[data-confirm]"); if(cfb){ openConfirmation(cfb.dataset.confirm); return; }
   const p=e.target.closest("[data-patient]"); if(p){ openPatient(p.dataset.patient); return; }
   const em=e.target.closest("[data-email]"); if(em){ openEmail(em.dataset.email); return; }
   const iv=e.target.closest("[data-invoice]"); if(iv){ openInvoice(iv.dataset.invoice); return; }
@@ -1200,6 +1201,7 @@ function openPatient(id){
    <div class="calc" id="calc"></div>
    <div id="sendBox"></div>
    ${centreReplyHtml(p.centreReply)}
+   ${confirmBanner(p)}
    <div class="section-l">Sessions · ${sess.length} planned</div>
    ${sess.length?`<section class="panel"><ul class="rows">${sess.map(x=>`<li><button class="row" data-session="${x.id}"><span class="money" style="font-weight:700">${h(x.time||"--:--")}</span><span style="min-width:0"><div class="t">${DAYN[dow(x.date)]} ${fmtDate(x.date)}</div><div class="s">${h(x.center||"No centre")}</div></span><span class="r">${h(x.status)}</span></button></li>`).join("")}</ul></section>`:`<p class="sub" style="margin:0">No sessions yet. Set dates, days and centre, save, then “Plan sessions”.</p>`}
    <div class="section-l">Medical file · ${docsDone(p)}/${DOCS.length} received</div>
@@ -1450,6 +1452,8 @@ function viewDashboard(v){
   const h2=v.querySelector(".head h2"); if(h2) h2.textContent="Dashboard";
   const cr=S.patients.filter(p=>siteOk(p)&&p.centreReply&&p.centreReply.seen===false);
   if(cr.length&&h2){ const L={accept:"accepted",refuse:"refused",propose:"proposed other times"}; h2.closest(".head").insertAdjacentHTML("afterend",`<div class="banner"><b>${cr.length} new answer${cr.length>1?"s":""} from centres:</b> ${cr.map(p=>`<button class="btn small" data-patient="${p.id}">${h(p.center||"Centre")} ${L[p.centreReply.action]||""} · ${h(p.name)}</button>`).join(" ")}</div>`); }
+  const cf=S.patients.filter(p=>siteOk(p)&&confirmDue(p));
+  if(cf.length&&h2){ h2.closest(".head").insertAdjacentHTML("afterend",`<div class="banner" style="border-color:var(--ok)"><b>${cf.length} confirmation email${cf.length>1?"s":""} ready to send:</b> ${cf.map(p=>`<button class="btn small primary" data-confirm="${p.id}">${h(p.name)}${p.center?" · "+h(p.center):""}</button>`).join(" ")}</div>`); }
   const em=S.emails.filter(e=>siteOk(e)&&e.kind!=="other").sort((a,b)=>new Date(b.receivedAt||0)-new Date(a.receivedAt||0));
   const latest=`<section class="panel latest"><h3>Latest submissions <span>newest first</span></h3>
     <ul class="rows">${em.slice(0,10).map(latestRow).join("")||`<li class="empty">No submissions yet.</li>`}</ul>
@@ -1503,6 +1507,29 @@ function emailInvoice(inv){
     :`Hello${p.name?" "+p.name:""},\n\nPlease find attached invoice ${inv.number} for ${amt}${inv.due?`, due by ${fmtDate(inv.due)}`:""}.\n\nPlease let us know if you have any questions.\n\nKind regards,\n${sign}`;
   openCompose({site:inv.site,to:p.email||"",subject:(fr?"Facture ":"Invoice ")+inv.number+" – "+siteName(inv.site),text,patientId:inv.patientId,invoiceId:inv.id});
 }
+/* Booking confirmation email: ready as soon as the centre accepts or the patient is set to Confirmed; you check and send it */
+function confirmDue(p){
+  if(!p||!p.email||p.confirmationSentAt||["done","lost"].includes(p.stage)) return false;
+  if(!S.replies.some(r=>r.use==="confirmed"&&(r.site||"TN")===p.site)) return false;
+  return ["confirmed","treatment"].includes(p.stage)||(p.centreReply&&p.centreReply.action==="accept");
+}
+function confirmEmail(p){
+  const mail=S.emails.filter(e=>e.patientId===p.id).sort((a,b)=>String(b.receivedAt).localeCompare(String(a.receivedAt)))[0];
+  const L0=p.lang||(mail?guessLang(mail):langOf(p)), L=["fr","en","ar"].includes(L0)?L0:"en";
+  const r=tplFind(p.site,"confirmed",L); if(!r) return null;
+  const e={site:p.site,patientId:p.id,fromName:p.name,subject:"",body:""};
+  const sub={fr:"Confirmation de votre réservation de dialyse",en:"Your dialysis booking is confirmed",ar:"تأكيد حجز جلسات تصفية الدم"}[L]+" – "+siteName(p.site);
+  return {subject:sub,text:tplFill(r.body,e,p,L),email:mail};
+}
+function openConfirmation(id){
+  const p=S.patients.find(x=>x.id===id); if(!p) return; const c=confirmEmail(p); if(!c){ toast("Add a “Booking confirmed” answer in the Reply library first"); return; }
+  openCompose({site:p.site,to:p.email,subject:c.subject,text:c.text,patientId:p.id,emailId:c.email?c.email.id:null,kind:"confirmation",attachConfirm:true});
+}
+function confirmBanner(p){
+  if(p.confirmationSentAt) return `<div class="banner" style="margin:0"><b>Confirmation email sent</b> <span class="sub">${fmtDate(p.confirmationSentAt)}</span> <button class="btn small" data-confirm="${p.id}">Send again</button></div>`;
+  if(!confirmDue(p)) return "";
+  return `<div class="banner" style="margin:0;border-color:var(--ok)"><b>Booking confirmed – the confirmation email is ready</b> <span class="sub">${p.centreReply&&p.centreReply.action==="accept"?"The centre accepted. ":""}Check it and send it to the patient.</span> <button class="btn primary small" data-confirm="${p.id}">Review and send</button></div>`;
+}
 function openCompose(o){
   const p=S.patients.find(x=>x.id===o.patientId), invs=p?S.invoices.filter(i=>i.patientId===p.id):[], tn=o.site==="TN", files=[];
   const fromAddr=siteSet("TN").email||"contact@dialysetunisie.com";
@@ -1513,7 +1540,7 @@ function openCompose(o){
     <label class="f full">Message<textarea id="cText" rows="12">${h(o.text||"")}</textarea></label></div>
     ${tn?`<div class="section-l">Attachments</div><div class="att">
       ${invs.map(i=>`<label class="chk"><input type="checkbox" data-inv="${i.id}" ${o.invoiceId===i.id?"checked":""}> Invoice ${h(i.number)} · ${money(invTotal(i),i.currency)}</label>`).join("")}
-      ${p?`<label class="chk"><input type="checkbox" id="cConf"> Booking confirmation PDF</label>`:""}
+      ${p?`<label class="chk"><input type="checkbox" id="cConf" ${o.attachConfirm?"checked":""}> Booking confirmation PDF</label>`:""}
       <label class="btn small" style="align-self:flex-start">Add a file from this device<input type="file" id="cFile" multiple hidden></label><div class="sub" id="cFiles"></div></div>`
     :`<p class="sub" style="margin:0">Dialysis Turkey's Zoho plan can't send from the app. “Open in mail app” starts a new email in your phone's mail app with everything filled in; attach PDFs there.</p>`}
     <div class="actions">${tn?`<button class="btn primary" id="cSend">Send from ${h(fromAddr)}</button>`:`<button class="btn primary" id="cMailto">Open in mail app</button>`}</div>
@@ -1540,6 +1567,7 @@ function openCompose(o){
       const {data,error}=await window.dwSupabase.functions.invoke("send-mail",{body:{site:"TN",...v,emailId:o.emailId||null,patientId:o.patientId||null,invoiceId:o.invoiceId||firstInv,attachments:atts}});
       if(error){ let m=error.message; try{ const j=await error.context.json(); m=j.error||m; }catch{} throw new Error(m); }
       if(data&&data.error) throw new Error(data.error);
+      if(o.kind==="confirmation"&&p) await db.doc("patients/"+p.id).update({confirmationSentAt:nowISO(),confirmationSentTo:v.to}).catch(()=>{});
       toast("Email sent to "+v.to+(data&&data.savedToSent?" · saved in Sent":"")); closeDrawer();
     }catch(e){ btn.disabled=false; delete btn.dataset.sure; btn.textContent="Send from "+fromAddr; msg.textContent=String(e.message||e); }
   };

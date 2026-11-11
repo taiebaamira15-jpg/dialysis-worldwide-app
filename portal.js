@@ -1,7 +1,8 @@
 // Dialysis Worldwide – espace centres partenaires.
 // Shown instead of the main app when the signed-in account belongs to a partner dialysis centre.
 // A centre account can't read the main database: everything here comes from portal_data(),
-// which only returns that centre's own patients (booking essentials), sessions and earnings.
+// which only returns that centre's own patients (booking essentials), sessions, invoices and earnings.
+// It refreshes itself: portal_stamp() is checked every 15 s and the page reloads its data when something changed.
 (function () {
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const DAY = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
@@ -40,12 +41,23 @@
   #portal .note{color:var(--muted);font-size:13px}
   #portal .scroll{overflow-x:auto}`;
 
-  let sb, me, data = { patients: [], sessions: [], earnings: [] }, tab = "patients", open = null, busy = false;
+  let sb, me, data = { patients: [], sessions: [], invoices: [], earnings: [] }, tab = "patients", open = null, busy = false, stamp = null, fresh = new Set();
 
   async function load() {
     const { data: d, error } = await sb.rpc("portal_data");
     if (error) throw error;
-    data = d || data;
+    const before = new Set((data.invoices || []).map(i => i.id + ":" + i.status));
+    data = Object.assign({ patients: [], sessions: [], invoices: [], earnings: [] }, d || {});
+    if (stamp !== null) fresh = new Set((data.invoices || []).filter(i => !before.has(i.id + ":" + i.status)).map(i => i.id));
+  }
+  // live: every 15 s ask the database whether anything changed for this centre (tiny call), reload only then
+  async function tick() {
+    if (document.visibilityState !== "visible" || open || busy) return;
+    const a = document.activeElement; if (a && /INPUT|TEXTAREA/.test(a.tagName)) return;
+    const { data: s, error } = await sb.rpc("portal_stamp");
+    if (error) return;
+    if (stamp === null) { stamp = s; return; }
+    if (s !== stamp) { stamp = s; await load(); render(); flash(fresh.size ? "Nouvelle facture ajoutée par Dialyse Tunisie" : "Mis à jour"); }
   }
   function root() { let r = document.getElementById("portal"); if (!r) { r = document.createElement("div"); r.id = "portal"; document.body.appendChild(r); } return r; }
 
@@ -76,6 +88,7 @@
       ${ss.length ? `<div class="scroll"><table><thead><tr><th>Jour</th><th>Date</th><th>Heure</th><th>Statut</th></tr></thead><tbody>
         ${ss.map(s => `<tr><td>${fday(s.date)}</td><td>${fdate(s.date)}</td><td>${esc(s.time || "—")}${s.proposed && s.proposed.time ? ` <span class="note">(proposé : ${fdate(s.proposed.date)} ${esc(s.proposed.time)})</span>` : ""}</td><td>${s.status === "confirmed" ? '<span class="chip ok">Confirmée</span>' : s.status === "done" ? '<span class="chip">Faite</span>' : s.status === "cancelled" ? '<span class="chip bad">Annulée</span>' : '<span class="chip">Prévue</span>'}</td></tr>`).join("")}
       </tbody></table></div>` : `<p class="note">Les horaires de séance seront ajoutés par Dialyse Tunisie.${p.time ? " Heure souhaitée : " + esc(p.time) + "." : ""}</p>`}
+      ${(data.invoices || []).filter(i => i.patientId === p.id).map(i => `<p class="note" style="margin:8px 0 0">🧾 Facture <b>${esc(i.number || "")}</b> · ${fdate(i.issued)} · ${money(i.total, i.currency)} · vos gains ${tnd(i.earned)} · ${invStatus(i)}${fresh.has(i.id) ? ' <span class="chip ok">Nouveau</span>' : ""}</p>`).join("")}
       ${r && r.note ? `<p class="note">Votre message : « ${esc(r.note)} »</p>` : ""}
       ${p.stage === "done" ? "" : `<div class="acts">
         <button class="pbtn pri" data-act="accept">Accepter</button>
@@ -108,6 +121,22 @@
       ${past.length ? `<h3 style="font-family:var(--f-display);margin:22px 0 10px">Séjours passés</h3>${past.map(patientCard).join("")}` : ""}`;
   }
 
+  const invStatus = i => i.status === "paid" ? '<span class="chip ok">Payée</span>' : '<span class="chip warn">En attente de paiement</span>';
+  const money = (n, c) => (Number(n) || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + (c === "EUR" ? "€" : (c || ""));
+  function invoicesView() {
+    const l = data.invoices || [], sum = (k, x = l) => x.reduce((a, i) => a + Number(i[k] || 0), 0), paid = l.filter(i => i.status === "paid");
+    return `<div class="kp"><div><b>${l.length}</b><span>Factures de vos patients</span></div>
+      <div><b>${tnd(sum("earned"))}</b><span>Vos gains sur ces factures</span></div>
+      <div><b>${tnd(sum("earned", paid))}</b><span>Dont déjà payé par les patients</span></div>
+      <div><b>${sum("sessions")}</b><span>Séances facturées</span></div></div>
+      <section class="card"><div class="scroll"><table><thead><tr><th>Facture</th><th>Date</th><th>Patient</th><th class="n">Séances</th><th class="n">Montant facturé</th><th class="n">Commission</th><th class="n">Vos gains</th><th>Paiement</th></tr></thead><tbody>
+      ${l.map(i => `<tr${fresh.has(i.id) ? ' style="background:var(--ok-soft)"' : ""}><td><b>${esc(i.number || "—")}</b>${fresh.has(i.id) ? ' <span class="chip ok">Nouveau</span>' : ""}</td><td>${fdate(i.issued)}</td><td>${esc(i.name)}</td><td class="n">${esc(i.sessions)}</td>
+        <td class="n">${money(i.total, i.currency)}${i.currency !== "TND" ? `<div style="font-size:11px;color:var(--muted)">${tnd(i.paidTnd)}</div>` : ""}</td>
+        <td class="n">${tnd(i.commission)}<div style="font-size:11px;color:var(--muted)">${esc(i.rate)} %</div></td><td class="n"><b>${tnd(i.earned)}</b></td><td>${invStatus(i)}${i.paidAt ? `<div class="note">${fdate(String(i.paidAt).slice(0, 10))}</div>` : ""}</td></tr>`).join("")}
+      </tbody></table></div>${l.length ? "" : `<div class="empty">Les factures de vos patients apparaîtront ici dès que Dialyse Tunisie les crée.</div>`}</section>
+      <p class="note">Mis à jour automatiquement. Calcul : commission = (montant payé en TND − ${l[0] ? tnd(l[0].fee) : "tarif"} × séances) × taux. Vos gains = montant payé − commission.</p>`;
+  }
+
   function earningsView() {
     const e = data.earnings, sum = (k, l = e) => l.reduce((a, x) => a + Number(x[k] || 0), 0);
     const owed = sum("commission", e.filter(x => x.status !== "paid"));
@@ -124,8 +153,8 @@
     const r = root();
     r.innerHTML = `<header class="pt"><span class="ttl"><span>Dialyse</span> Tunisie · Espace partenaire</span><span class="who">${esc(me.centre)}</span><span class="sp"></span>
       <button class="pbtn" id="pt_ref">Actualiser</button><button class="pbtn" id="pt_out">Déconnexion</button></header>
-      <main><div class="tabs"><button data-tab="patients" aria-pressed="${tab === "patients"}">Patients</button><button data-tab="earnings" aria-pressed="${tab === "earnings"}">Mes gains</button></div>
-      ${tab === "patients" ? patientsView() : earningsView()}</main>`;
+      <main><div class="tabs"><button data-tab="patients" aria-pressed="${tab === "patients"}">Patients</button><button data-tab="invoices" aria-pressed="${tab === "invoices"}">Factures${(data.invoices || []).length ? " (" + data.invoices.length + ")" : ""}</button><button data-tab="earnings" aria-pressed="${tab === "earnings"}">Mes gains</button></div>
+      ${tab === "patients" ? patientsView() : tab === "invoices" ? invoicesView() : earningsView()}</main>`;
   }
 
   async function send(act, pid) {
@@ -163,5 +192,6 @@
       if (e.target.id === "pt_out") { sb.auth.signOut().then(() => location.reload()); return; }
     });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !open) load().then(render).catch(() => {}); });
+    tick(); setInterval(() => tick().catch(() => {}), 15000);
   };
 })();
