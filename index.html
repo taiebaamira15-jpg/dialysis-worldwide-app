@@ -643,7 +643,7 @@ function openEmail(id){
   $("eCopy").onclick=()=>copy($("eReply").value);
   $("eSaveDraft").onclick=async()=>{ await db.doc("emails/"+id).update({draftReply:$("eReply").value}); toast("Draft saved"); };
   $("eDraft").onclick=()=>draftReply(e);
-  if(!e.draftReply&&!e.answered&&e.kind!=="other"){ try{ const d=localDraft(e); if(d) $("eReply").value=d; }catch(_){} }
+  if(!e.draftReply&&!e.answered&&e.kind!=="other"){ try{ const d=e.site==="TN"?tplDraft(e):localDraft(e); if(d) $("eReply").value=d; }catch(_){} }
   $("eSend").onclick=async()=>{ const t=$("eReply").value; if(t!==(e.draftReply||"")) await db.doc("emails/"+id).update({draftReply:t}); openCompose({site:e.site,to:e.from,subject:/^re:/i.test(e.subject||"")?e.subject:"Re: "+(e.subject||""),text:t,emailId:e.id,patientId:e.patientId}); };
 }
 function fillTemplate(t,site){
@@ -692,7 +692,8 @@ function tplFill(body,e,p,lang){
   const s=siteSet(e.site), TC={fr:"[à confirmer]",en:"[to confirm]",ar:"[للتأكيد]"}[lang]||"[to confirm]";
   const loc={fr:"fr-FR",en:"en-GB",ar:"ar-TN"}[lang]||"en-GB";
   const fd=d=>new Date(d).toLocaleDateString(loc,{day:"numeric",month:"long",year:"numeric"});
-  const name=(p&&p.name)||e.fromName||"";
+  const okName=n=>/^[\p{L}\p{M}' .-]{2,50}$/u.test(String(n||"").trim())&&!/[.@]\S/.test(String(n))&&!/(team|équipe|equipe|support|service|info|contact|secr[eé]tariat|noreply|admin)/i.test(String(n));
+  const name=[(p&&p.name),e.fromName].find(okName)||"";
   const c=p&&p.center?centreBy(p.center):{};
   const dates=p&&p.arrival&&p.departure?({fr:`du ${fd(p.arrival)} au ${fd(p.departure)}`,en:`${fd(p.arrival)} to ${fd(p.departure)}`,ar:`من ${fd(p.arrival)} إلى ${fd(p.departure)}`}[lang]||`${fd(p.arrival)} – ${fd(p.departure)}`):TC;
   let times=TC;
@@ -708,7 +709,9 @@ function tplFill(body,e,p,lang){
   if(name) out=out.replace(/^Bonjour,/m,`Bonjour ${name},`).replace(/^Dear Patient,/m,`Dear ${name},`).replace(/^مرحباً،/m,`مرحباً ${name}،`);
   return fillTemplate(out,e.site);
 }
+const TPL_PITCH=/(\bSEO\b|web ?design|website (redesign|development)|intelligent website|AI-driven|growth|backlinks?|ranking|leads? generation|marketing|google (ads|maps)|monthly grocery|d[ée]panneur|our (agency|team) can|guest post|rank (higher|on google))/i;
 function tplDraft(e){
+  if(TPL_PITCH.test((e.subject||"")+" "+String(e.body||"").slice(0,1500))&&!(S.patients.find(x=>x.id===e.patientId))) return "";
   if(!S.replies.some(r=>r.use&&(r.site||"TN")===e.site)) return "";
   const p=S.patients.find(x=>x.id===e.patientId), lang=(p&&p.lang)||guessLang(e), L=["fr","en","ar"].includes(lang)?lang:"en";
   const parts=tplUses(e,p).map(u=>tplFind(e.site,u,L)).filter(Boolean).filter((r,i,a)=>a.indexOf(r)===i);
