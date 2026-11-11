@@ -653,12 +653,18 @@ function fillTemplate(t,site){
 }
 /* Built-in draft writer: works without Claude (own app / phone). Uses the reply library, site settings and the patient file. */
 function guessLang(e){
-  const l=String(e.language||"").toLowerCase().slice(0,2); if(["fr","en","ar","de"].includes(l)) return l;
-  const t=String(e.body||"")+" "+(e.subject||"");
-  if(/[\u0600-\u06FF]/.test(t)) return "ar";
-  if(/\b(bonjour|merci|séance|dialyse|je suis|vous|madame|monsieur)\b/i.test(t)) return "fr";
-  if(/\b(hallo|guten|danke|ich|bitte|sehr geehrte)\b/i.test(t)) return "de";
-  return "en";
+  const stored=String(e.language||"").toLowerCase().slice(0,2);
+  const t=(String(e.subject||"")+" "+String(e.body||"").slice(0,2000)).replace(/dialyse ?tunisie|dialysetunisie\.com|dialysis ?turkey/gi," ");
+  const ar=(t.match(/[\u0600-\u06FF]/g)||[]).length, lat=(t.match(/[a-zA-Z]/g)||[]).length;
+  if(ar>20&&ar>lat*0.3) return "ar";
+  const cnt=rx=>(t.match(rx)||[]).length;
+  const fr=cnt(/\b(bonjour|merci|je|vous|nous|est|pour|avec|les|des|une|séances?|dialyse|madame|monsieur|cordialement|souhaite)\b/gi);
+  const en=cnt(/\b(hello|hi|dear|thank|thanks|the|and|is|are|for|with|you|your|we|please|would|sessions?|regards)\b/gi);
+  const de=cnt(/\b(hallo|guten|danke|ich|bitte|sehr|geehrte|und|nicht|wir|ihre?)\b/gi);
+  const best=[["fr",fr],["en",en],["de",de]].sort((a,b)=>b[1]-a[1])[0];
+  if(best[1]>=3) return best[0];
+  if(["fr","en","ar","de"].includes(stored)) return stored;
+  return ar?"ar":"en";
 }
 /* Dialyse Tunisie answer kit: pick the right saved answer(s) from the Reply library (field "use") and fill them from the email + patient file */
 const TPL_RX={
