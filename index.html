@@ -639,10 +639,11 @@ function openEmail(id){
   $("eAns").onclick=async()=>{ await db.doc("emails/"+id).update({answered:!e.answered, answeredAt:!e.answered?nowISO():null}); toast(!e.answered?"Marked as answered":"Marked as not answered"); closeDrawer(); };
   $("eKind").onchange=async ev=>{ await db.doc("emails/"+id).update({kind:ev.target.value}); toast("Type changed"); };
   if($("eMk")) $("eMk").onclick=()=>createPatientFromEmail(e);
-  $("eTpl").onchange=ev=>{ const r=S.replies.find(x=>x.id===ev.target.value); if(r){ const ta=$("eReply"); ta.value=(ta.value?ta.value+"\n\n":"")+fillTemplate(r.body,e.site); } ev.target.value=""; };
+  $("eTpl").onchange=ev=>{ const r=S.replies.find(x=>x.id===ev.target.value); if(r){ const ta=$("eReply"); const pp=S.patients.find(x=>x.id===e.patientId), lg=String(r.lang||"en").toLowerCase(); ta.value=(ta.value?ta.value+"\n\n":"")+tplFill(r.body,e,pp,["fr","en","ar"].includes(lg)?lg:"en"); } ev.target.value=""; };
   $("eCopy").onclick=()=>copy($("eReply").value);
   $("eSaveDraft").onclick=async()=>{ await db.doc("emails/"+id).update({draftReply:$("eReply").value}); toast("Draft saved"); };
   $("eDraft").onclick=()=>draftReply(e);
+  if(!e.draftReply&&!e.answered&&e.kind!=="other"){ try{ const d=localDraft(e); if(d) $("eReply").value=d; }catch(_){} }
   $("eSend").onclick=async()=>{ const t=$("eReply").value; if(t!==(e.draftReply||"")) await db.doc("emails/"+id).update({draftReply:t}); openCompose({site:e.site,to:e.from,subject:/^re:/i.test(e.subject||"")?e.subject:"Re: "+(e.subject||""),text:t,emailId:e.id,patientId:e.patientId}); };
 }
 function fillTemplate(t,site){
@@ -659,7 +660,64 @@ function guessLang(e){
   if(/\b(hallo|guten|danke|ich|bitte|sehr geehrte)\b/i.test(t)) return "de";
   return "en";
 }
+/* Dialyse Tunisie answer kit: pick the right saved answer(s) from the Reply library (field "use") and fill them from the email + patient file */
+const TPL_RX={
+  received:/(ci-?joint|pi[eè]ces? jointes?|en pi[eè]ce jointe|veuillez trouver|vous trouverez|attached|attachment|please find|enclosed|مرفق|المرفقة|في المرفق)/i,
+  price:/(prix|tarif|co[uû]t|combien|price|cost|how much|fees?\b|rates?\b|سعر|ثمن|تكلفة|أسعار|كم)/i,
+  transport:/(transport|taxi|navette|transfert|transfer|pick ?-?up|shuttle|chauffeur|نقل|توصيل)/i,
+  news:/(des nouvelles|o[uù] en est|avez-vous eu|toujours en attente|any news|any update|update on my|still waiting|هل من جديد|أي جديد)/i
+};
+function tplUses(e,p){
+  const txt=((e.subject||"")+"\n"+(e.body||""));
+  if(p&&["confirmed","treatment"].includes(p.stage)) return ["confirmed"];
+  if(p&&p.sentToCentre&&!p.centreReply&&(TPL_RX.news.test(txt)||p.stage==="quote")) return ["pending"];
+  const uses=[];
+  if(TPL_RX.received.test(txt)&&(e.kind==="application"||p)) uses.push("received");
+  else if(e.kind==="application"||!TPL_RX.price.test(txt)) uses.push("documents");
+  if(TPL_RX.price.test(txt)&&!uses.includes("received")) uses.push("price");
+  if(TPL_RX.transport.test(txt)) uses.push("transport");
+  return uses;
+}
+function tplFind(site,use,lang){
+  const L=String(lang||"en").toUpperCase(), list=S.replies.filter(r=>r.use===use&&(r.site||"TN")===site);
+  return list.find(r=>String(r.lang).toUpperCase()===L)||list.find(r=>String(r.lang).toUpperCase()===(L==="AR"?"FR":"EN"))||list.find(r=>String(r.lang).toUpperCase()==="FR")||list[0];
+}
+function tplFill(body,e,p,lang){
+  const s=siteSet(e.site), TC={fr:"[à confirmer]",en:"[to confirm]",ar:"[للتأكيد]"}[lang]||"[to confirm]";
+  const loc={fr:"fr-FR",en:"en-GB",ar:"ar-TN"}[lang]||"en-GB";
+  const fd=d=>new Date(d).toLocaleDateString(loc,{day:"numeric",month:"long",year:"numeric"});
+  const name=(p&&p.name)||e.fromName||"";
+  const c=p&&p.center?centreBy(p.center):{};
+  const dates=p&&p.arrival&&p.departure?({fr:`du ${fd(p.arrival)} au ${fd(p.departure)}`,en:`${fd(p.arrival)} to ${fd(p.departure)}`,ar:`من ${fd(p.arrival)} إلى ${fd(p.departure)}`}[lang]||`${fd(p.arrival)} – ${fd(p.departure)}`):TC;
+  let times=TC;
+  if(p&&(p.time||(Array.isArray(p.days)&&p.days.length))){
+    const DN={fr:["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"],en:["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"],ar:["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"]}[lang]||DAYN;
+    const ds=(Array.isArray(p.days)?p.days:[]).map(d=>DN[Number(d)]).join(lang==="ar"?" و":", ");
+    const tm=p.time||c.defaultTime||"";
+    times=[ds,tm?({fr:"à ",en:"at ",ar:"على الساعة "}[lang]||"")+tm:"",p.hours?"("+p.hours+")":""].filter(Boolean).join(" ")||TC;
+  }
+  const price=s.price?money(s.price,s.currency):TC;
+  const map=[[/\[(Patient Name|اسم المريض)\]/g,name||TC],[/\[(Center Name|اسم المركز)\]/g,(p&&p.center)||TC],[/\[(City|المدينة)\]/g,(p&&p.city)||c.city||TC],[/\[(Dates|التواريخ)\]/g,dates],[/\[(Times|التوقيت)\]/g,times],[/\[(Price|السعر)\]/g,price]];
+  let out=body; map.forEach(([rx,v])=>{out=out.replace(rx,v);});
+  if(name) out=out.replace(/^Bonjour,/m,`Bonjour ${name},`).replace(/^Dear Patient,/m,`Dear ${name},`).replace(/^مرحباً،/m,`مرحباً ${name}،`);
+  return fillTemplate(out,e.site);
+}
+function tplDraft(e){
+  if(!S.replies.some(r=>r.use&&(r.site||"TN")===e.site)) return "";
+  const p=S.patients.find(x=>x.id===e.patientId), lang=(p&&p.lang)||guessLang(e), L=["fr","en","ar"].includes(lang)?lang:"en";
+  const parts=tplUses(e,p).map(u=>tplFind(e.site,u,L)).filter(Boolean).filter((r,i,a)=>a.indexOf(r)===i);
+  if(!parts.length) return "";
+  const SIG=/^(Cordialement|Bien cordialement|Best regards|Kind regards|مع تحيات|فريق Dialyse|L'équipe|Dialyse Tunisie\.?$|Dialyse Tunisie Team)/;
+  const blocks=parts.map(r=>{ const lines=String(r.body).trim().split("\n"); const si=lines.findIndex(l=>SIG.test(l.trim())); return {head:lines[0], mid:lines.slice(1,si>0?si:lines.length).join("\n").trim(), sig:si>0?lines.slice(si).join("\n"):""}; });
+  const ASK=/(dates de séjour|vos dates|travel dates|destination and travel|destination ainsi que|تواريخ إقامتكم|بتاريخ الوصول والمغادرة)/i;
+  const known=p&&p.arrival&&p.departure&&p.city; let asked=false;
+  blocks.forEach(b=>{ b.mid=b.mid.split(/\n\n+/).filter(par=>{ if(!ASK.test(par)) return true; if(known||asked) return false; asked=true; return true; }).join("\n\n"); });
+  const last=blocks[blocks.length-1];
+  const text=[blocks[0].head,"",blocks.map(b=>b.mid).join("\n\n"),"",last.sig||blocks.find(b=>b.sig)?.sig||""].join("\n").replace(/\n{3,}/g,"\n\n").trim();
+  return tplFill(text,e,p,L);
+}
 function localDraft(e){
+  { const kit=tplDraft(e); if(kit) return kit; }
   const lang=guessLang(e), s=siteSet(e.site), site=siteName(e.site), p=S.patients.find(x=>x.id===e.patientId);
   const TC={fr:"[à confirmer]",en:"[to confirm]",ar:"[للتأكيد]",de:"[zu bestätigen]"}[lang];
   const price=s.price?money(s.price,s.currency):TC, phone=s.phone||TC, sign=s.signature||({fr:"L'équipe ",en:"The ",ar:"فريق ",de:"Das Team von "}[lang]+site+(lang==="en"?" team":""));
@@ -682,7 +740,7 @@ function localDraft(e){
   return T[lang]();
 }
 async function draftReply(e){
-  if(!sample){
+  if(!sample||tplDraft(e)){
     const ta=$("eReply"); ta.value=localDraft(e); await db.doc("emails/"+e.id).update({draftReply:ta.value});
     toast("Draft ready. Fill in the [to confirm] parts."); return;
   }
@@ -1325,10 +1383,11 @@ function openReply(id){
   const r=S.replies.find(x=>x.id===id); if(!r) return;
   drawer(`<header><h3>${h(r.title)}</h3><button class="x" data-close aria-label="Close">×</button></header><div class="body">
    <div class="form"><label class="f">Title<input id="r_title" value="${h(r.title)}"></label><label class="f">Language<select id="r_lang">${["EN","FR","AR","TR","DE","IT"].map(l=>`<option ${r.lang===l?'selected':''}>${l}</option>`).join("")}</select></label>
+   <label class="f">Used for (automatic drafts)<select id="r_use">${[["","Only when I insert it"],["documents","Documents to book"],["price","Price per session"],["dates","Ask stay dates"],["received","Documents received"],["pending","Booking pending"],["confirmed","Booking confirmed"],["transport","Transport"],["arrival","Confirm arrival date"],["followup","Follow-up"]].map(([k,l])=>`<option value="${k}" ${(r.use||"")===k?'selected':''}>${l}</option>`).join("")}</select></label><label class="f">Site<select id="r_site">${Object.values(SITES).map(x=>`<option value="${x.key}" ${(r.site||"TN")===x.key?'selected':''}>${h(siteName(x.key))}</option>`).join("")}</select></label>
    <label class="f full">Text<textarea id="r_body" rows="14">${h(r.body)}</textarea></label></div>
-   <p class="sub" style="margin:0">Placeholders filled in per site: {site} {price} {email} {phone} {website}</p>
+   <p class="sub" style="margin:0">Filled in automatically: {site} {price} {email} {phone} {website}, and from the patient file: [Patient Name] [Center Name] [City] [Dates] [Times] [Price]</p>
    <div class="actions"><button class="btn primary" id="rSave">Save</button><button class="btn danger" id="rDel">Delete</button></div></div>`);
-  $("rSave").onclick=async()=>{ await db.doc("replies/"+id).update({title:$("r_title").value,lang:$("r_lang").value,body:$("r_body").value}); toast("Answer saved"); closeDrawer(); };
+  $("rSave").onclick=async()=>{ await db.doc("replies/"+id).update({title:$("r_title").value,lang:$("r_lang").value,use:$("r_use").value,site:$("r_site").value,body:$("r_body").value}); toast("Answer saved"); closeDrawer(); };
   $("rDel").onclick=()=>{ const b=$("rDel"); if(b.dataset.sure){ db.doc("replies/"+id).delete(); closeDrawer(); } else { b.dataset.sure=1; b.textContent="Click again to delete"; } };
 }
 
