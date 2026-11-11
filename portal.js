@@ -38,7 +38,7 @@
   #portal textarea,#portal input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)} #portal textarea{width:100%;box-sizing:border-box}
   #portal .form{margin-top:12px;padding:12px;border-radius:10px;background:var(--sunk)} #portal .form .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
   #portal .empty{color:var(--muted);text-align:center;padding:30px 10px}
-  #portal .note{color:var(--muted);font-size:13px}
+  #portal .note{color:var(--muted);font-size:13px;background:none;border:0;padding:0;border-radius:0;box-shadow:none}
   #portal .scroll{overflow-x:auto}`;
 
   let sb, me, data = { patients: [], sessions: [], invoices: [], earnings: [] }, tab = "patients", open = null, busy = false, stamp = null, fresh = new Set();
